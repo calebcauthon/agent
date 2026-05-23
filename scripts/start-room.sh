@@ -9,6 +9,7 @@ ROOMS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKTREE="${HOME}/.rooms/worktrees/${PROJECT_NAME}/${ROOM}"
 SESSIONS_DIR="${HOME}/.rooms/sessions/${PROJECT_NAME}/${ROOM}"
 PORT_FILE="${HOME}/.rooms/ports/${PROJECT_NAME}/${ROOM}"
+PROJECT_ENV_FILE="${PROJECT}/.env"
 
 CLAUDE_DATA_DIR="${HOME}/.rooms/claude/${PROJECT_NAME}/${ROOM}"
 mkdir -p "$SESSIONS_DIR" "$CLAUDE_DATA_DIR" "$(dirname "$PORT_FILE")"
@@ -101,6 +102,14 @@ fi
 
 COMMON_GIT_DIR="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)"
 
+DOCKER_ENV_ARGS=()
+if [ -f "$PROJECT_ENV_FILE" ]; then
+  DOCKER_ENV_ARGS+=(--env-file "$PROJECT_ENV_FILE")
+fi
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  DOCKER_ENV_ARGS+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
+fi
+
 # Use project's Dockerfile if it has one, otherwise fall back to rooms default
 if [ -f "${PROJECT}/Dockerfile" ]; then
   docker build -t "${PROJECT_NAME}-room" "$PROJECT"
@@ -118,7 +127,7 @@ docker run -dit \
   -v "${CLAUDE_DATA_DIR}:/home/the_agent/.claude" \
   -v "${COMMON_GIT_DIR}:${COMMON_GIT_DIR}:ro" \
   -w "${WORKTREE}" \
-  -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+  "${DOCKER_ENV_ARGS[@]}" \
   "${PROJECT_NAME}-room" \
   bash >/dev/null
 
@@ -128,5 +137,8 @@ echo "status=created-detached"
 echo "port=${PORT}"
 echo "branch=room/${ROOM}"
 echo "worktree=${WORKTREE}"
+if [ -f "$PROJECT_ENV_FILE" ]; then
+  echo "env_file=${PROJECT_ENV_FILE}"
+fi
 echo "next=agent ${ROOM}"
 echo "dev_command=npm install && npm run dev -- -H 0.0.0.0"

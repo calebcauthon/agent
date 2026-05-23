@@ -4,6 +4,7 @@ set -euo pipefail
 ROOM="${1:?Usage: agent <room> [agent-name]}"
 PROJECT="${PROJECT:-$PWD}"
 PROJECT_NAME="$(basename "$PROJECT")"
+PROJECT_ENV_FILE="${PROJECT}/.env"
 
 # Accept either the full container name or just the room name
 if docker inspect "$ROOM" &>/dev/null 2>&1; then
@@ -71,12 +72,24 @@ docker exec "$CONTAINER" bash -c "
     echo 'export HISTFILESIZE=50000'
     echo \"export PROMPT_COMMAND='history -a'\"
     echo \"trap 'history -a' EXIT\"
-    echo 'export ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}'
+    echo 'export ANTHROPIC_API_KEY=\${ANTHROPIC_API_KEY:-}'
     echo 'history -r 2>/dev/null || true'
     echo '[ -f /home/the_agent/.bashrc ] && source /home/the_agent/.bashrc'
   } > /sessions/${AGENT}/init.sh
   chown the_agent:the_agent /sessions/${AGENT}/init.sh
 "
 
-docker exec -it -u the_agent "$CONTAINER" \
+EXEC_ENV_ARGS=()
+if [ -f "$PROJECT_ENV_FILE" ]; then
+  EXEC_ENV_ARGS+=(--env-file "$PROJECT_ENV_FILE")
+fi
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  EXEC_ENV_ARGS+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
+fi
+
+if [ -f "$PROJECT_ENV_FILE" ]; then
+  echo "env_file=${PROJECT_ENV_FILE}"
+fi
+
+docker exec -it -u the_agent "${EXEC_ENV_ARGS[@]}" "$CONTAINER" \
   tmux new-session -A -s "${AGENT}" "bash --init-file /sessions/${AGENT}/init.sh"

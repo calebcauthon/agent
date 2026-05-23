@@ -3,18 +3,48 @@
 
 _ROOMS_DIR="${HOME}/code/rooms"
 
+_rooms_project_slug() {
+  local slug
+  slug="$(basename "$PWD" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+  printf '%s' "${slug:-project}"
+}
+
+_rooms_default_room() {
+  printf 'default-%s' "$(_rooms_project_slug)"
+}
+
 room() {
-  local name="${1:?Usage: room <name>}"
+  local name="${1:-$(_rooms_default_room)}"
   PROJECT="$PWD" bash "${_ROOMS_DIR}/scripts/start-room.sh" "$name"
 }
 
 agent() {
-  local room_name="${1:?Usage: agent <room> [agent-name]}"
-  PROJECT="$PWD" bash "${_ROOMS_DIR}/scripts/start-session.sh" "$room_name" "${2:-}"
+  local room_name agent_name
+
+  case "$#" in
+    0)
+      room_name="$(_rooms_default_room)"
+      agent_name=""
+      ;;
+    1)
+      room_name="$(_rooms_default_room)"
+      agent_name="$1"
+      ;;
+    *)
+      # Back-compat: agent <room> <agent-name>
+      room_name="$1"
+      agent_name="$2"
+      ;;
+  esac
+
+  PROJECT="$PWD" bash "${_ROOMS_DIR}/scripts/start-room.sh" "$room_name"
+  PROJECT="$PWD" bash "${_ROOMS_DIR}/scripts/start-session.sh" "$room_name" "$agent_name"
 }
 
 logs() {
-  local room_name="${1:?Usage: logs <room>}"
+  local room_name="${1:-$(_rooms_default_room)}"
   if docker inspect "$room_name" &>/dev/null 2>&1; then
     docker logs -f "$room_name"
   else
@@ -39,9 +69,14 @@ rooms() {
 agents() {
   case "${1:-}" in
     rm)
-      local room="${2:?Usage: agents rm <room> <agent-name>}"
-      local agent_name="${3:?Usage: agents rm <room> <agent-name>}"
-      local container
+      local room agent_name container
+      if [ "$#" -eq 2 ]; then
+        room="$(_rooms_default_room)"
+        agent_name="$2"
+      else
+        room="${2:?Usage: agents rm [room] <agent-name>}"
+        agent_name="${3:?Usage: agents rm [room] <agent-name>}"
+      fi
       if docker inspect "$room" &>/dev/null 2>&1; then
         container="$room"
       else
@@ -52,7 +87,7 @@ agents() {
         || echo "agent '${agent_name}' not found"
       ;;
     *)
-      local room_name="${1:?Usage: agents <room>}"
+      local room_name="${1:-$(_rooms_default_room)}"
       local container
       if docker inspect "$room_name" &>/dev/null 2>&1; then
         container="$room_name"

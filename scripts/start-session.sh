@@ -58,11 +58,22 @@ docker exec "$CONTAINER" bash -c "
 ZSH_CONFIG_DIR="${ROOMS_DIR}/zsh"
 if [ -f "${ZSH_CONFIG_DIR}/zshrc" ]; then
   docker cp "${ZSH_CONFIG_DIR}/zshrc" "$CONTAINER":/home/the_agent/.zshrc
+  if [ -f "${ZSH_CONFIG_DIR}/p10k.zsh" ]; then
+    docker cp "${ZSH_CONFIG_DIR}/p10k.zsh" "$CONTAINER":/home/the_agent/.rooms-zsh/p10k.zsh
+  fi
   if [ -d "${ZSH_CONFIG_DIR}/custom" ]; then
     docker exec "$CONTAINER" rm -rf /home/the_agent/.rooms-zsh/custom
     docker cp "${ZSH_CONFIG_DIR}/custom" "$CONTAINER":/home/the_agent/.rooms-zsh/custom
   fi
   docker exec "$CONTAINER" chown -R the_agent:the_agent /home/the_agent/.zshrc /home/the_agent/.rooms-zsh
+fi
+
+# Copy in shared tmux settings. Existing tmux servers are re-sourced below.
+TMUX_CONFIG="${ROOMS_DIR}/tmux/tmux.conf"
+if [ -f "$TMUX_CONFIG" ]; then
+  docker cp "$TMUX_CONFIG" "$CONTAINER":/home/the_agent/.tmux.conf
+  docker exec "$CONTAINER" chown the_agent:the_agent /home/the_agent/.tmux.conf
+  docker exec -u the_agent "$CONTAINER" tmux source-file /home/the_agent/.tmux.conf >/dev/null 2>&1 || true
 fi
 
 # Copy in claude settings (base from rooms, overridden by project if present)

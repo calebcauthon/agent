@@ -1,4 +1,5 @@
 # Shared zsh defaults for rooms agents.
+# Mirrors Caleb's local zsh setup while intentionally excluding secrets from ~/.zshrc.
 # This file is copied to /home/the_agent/.zshrc and sourced by each
 # per-agent session rc at /sessions/<agent>/.zshrc.
 
@@ -9,10 +10,11 @@ DISABLE_AUTO_UPDATE="true"
 DISABLE_UPDATE_PROMPT="true"
 HIST_STAMPS="yyyy-mm-dd"
 
-# Keep the prompt readable in bare terminals, but nicer than stock bash.
-ZSH_THEME="${ZSH_THEME:-bira}"
+# Caleb's preferred prompt.
+ZSH_THEME="${ZSH_THEME:-powerlevel10k/powerlevel10k}"
 
-plugins=(git docker npm node)
+plugins=(git)
+command -v zoxide >/dev/null 2>&1 && plugins+=(zoxide)
 [ -d "$ZSH/custom/plugins/zsh-autosuggestions" ] && plugins+=(zsh-autosuggestions)
 [ -d "$ZSH/custom/plugins/zsh-syntax-highlighting" ] && plugins+=(zsh-syntax-highlighting)
 
@@ -22,9 +24,16 @@ else
   autoload -Uz compinit && compinit -i
 fi
 
+# Powerlevel10k prompt config copied from Caleb's ~/.p10k.zsh.
+[ -f "$ROOMS_ZSH_DIR/p10k.zsh" ] && source "$ROOMS_ZSH_DIR/p10k.zsh"
+
 # Rooms-provided customizations.
 [ -f "$ROOMS_ZSH_DIR/custom/aliases.zsh" ] && source "$ROOMS_ZSH_DIR/custom/aliases.zsh"
 [ -f "$ROOMS_ZSH_DIR/custom/functions.zsh" ] && source "$ROOMS_ZSH_DIR/custom/functions.zsh"
+[ -f "$ROOMS_ZSH_DIR/custom/caleb.zsh" ] && source "$ROOMS_ZSH_DIR/custom/caleb.zsh"
+
+# Keep the rooms shell helper available inside agent containers too.
+[ -f /workspace/shell.sh ] && source /workspace/shell.sh
 
 # Optional machine/user and project hooks. These are intentionally quiet.
 [ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"

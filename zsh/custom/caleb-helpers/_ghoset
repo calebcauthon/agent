@@ -1,0 +1,145 @@
+#!/bin/zsh
+
+# zsh completion for ghoset command
+# Autocompletes Ghostty setting names using zsh's built-in completion system
+
+# Get the list of commonly used Ghostty configuration options
+typeset -a gh_options
+gh_options=(
+    # Core appearance options
+    'theme'
+    'font-family'
+    'font-size'
+    'background'
+    'foreground'
+    'cursor-color'
+    'cursor-style'
+    'cursor-opacity'
+
+    # Window management
+    'window-padding-x'
+    'window-padding-y'
+    'window-decoration'
+    'window-theme'
+    'window-title-font-family'
+    'window-height'
+    'window-width'
+    'window-position-x'
+    'window-position-y'
+    'window-vsync'
+    'window-show-tab-bar'
+    'window-step-resize'
+
+    # macOS-specific options
+    'macos-window-buttons'
+    'macos-titlebar-style'
+    'macos-titlebar-proxy-icon'
+    'macos-window-shadow'
+    'macos-option-as-alt'
+    'macos-auto-secure-input'
+    'macos-secure-input-indication'
+    'macos-icon'
+    'macos-custom-icon'
+    'macos-icon-frame'
+    'macos-icon-ghost-color'
+    'macos-icon-screen-color'
+    'macos-non-native-fullscreen'
+    'macos-dock-drop-behavior'
+    'macos-hidden'
+    'macos-shortcuts'
+
+    # Background and images
+    'background-image'
+    'background-image-opacity'
+    'background-image-fit'
+    'background-image-position'
+    'background-image-repeat'
+    'background-opacity'
+    'background-blur'
+
+    # Selection behavior
+    'selection-foreground'
+    'selection-background'
+    'selection-clear-on-typing'
+    'selection-clear-on-copy'
+    'copy-on-select'
+
+    # Mouse and interaction
+    'mouse-hide-while-typing'
+    'mouse-scroll-multiplier'
+    'mouse-shift-capture'
+    'cursor-click-to-move'
+
+    # Links and scrolling
+    'link-url'
+    'link-previews'
+    'scrollback-limit'
+
+    # Title and working directory
+    'title'
+    'class'
+    'working-directory'
+    'title-report'
+
+    # Keybinds
+    'keybind'
+
+    # Less common but useful options
+    'window-padding-balance'
+    'window-padding-color'
+    'window-colorspace'
+    'window-inherit-font-size'
+    'window-inherit-working-directory'
+    'window-new-tab-position'
+    'window-save-state'
+    'window-subtitle'
+    'window-titlebar-background'
+    'window-titlebar-foreground'
+
+    # Advanced font options
+    'font-family-bold'
+    'font-family-italic'
+    'font-family-bold-italic'
+    'font-style'
+    'font-style-bold'
+    'font-style-italic'
+    'font-style-bold-italic'
+)
+
+# Main completion function
+_ghoset() {
+    local context curcontext="_ghoset"
+    local -a opt_args
+
+    # Parse command line arguments
+    _arguments \
+        '(-)'{-h,--help}'[Show help information]' \
+        '*::argument:_ghoset_args' && return 0
+
+    return 1
+}
+
+# Handle completion of arguments (setting names and values)
+_ghoset_args() {
+    local context curcontext="_ghoset_args"
+
+    # If we have exactly one argument, complete setting names
+    # If we have two or more arguments, we're completing values (no completion for now)
+    case $CURRENT in
+        1)
+            # Complete setting names with partial matching
+            _describe 'Ghostty settings' gh_options
+            ;;
+        2)
+            # Don't complete values - user types them manually
+            _message "Enter value for setting"
+            ;;
+        *)
+            # No completion for additional arguments
+            _message "No more arguments needed"
+            ;;
+    esac
+}
+
+# Initialize completion
+compdef _ghoset ghoset

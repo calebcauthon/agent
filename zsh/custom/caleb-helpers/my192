@@ -1,0 +1,28 @@
+#!/bin/zsh
+#
+# my192 - Display the local 192.x.x.x IP address
+#
+
+my192() {
+  local ip
+
+  # Try to get 192.x.x.x IP from network interfaces
+  ip=$(ifconfig 2>/dev/null | grep "inet 192" | awk '{print $2}' | head -n1)
+
+  if [[ -z "$ip" ]]; then
+    # Fallback to ip command on Linux
+    ip=$(ip addr 2>/dev/null | grep "inet 192" | awk '{print $2}' | cut -d/ -f1 | head -n1)
+  fi
+
+  if [[ -n "$ip" ]]; then
+    # Friendly message to stderr, just the IP to stdout for piping
+    echo "🌐 Your 192 IP: \033[1;32m${ip}\033[0m" >&2
+    echo "$ip"
+  else
+    echo "❌ No 192.x.x.x IP address found" >&2
+    return 1
+  fi
+}
+
+# Run if executed directly, not when sourced
+[[ $ZSH_EVAL_CONTEXT == *file* ]] || my192 "$@"

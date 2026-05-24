@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""
+ss - Visual tree-style git status
+
+Shows changed/untracked files in the current git repository as a folder tree.
+
+Usage:
+  ss
+
+Exit codes:
+  0 - Success
+  1 - Not a git repository or git error
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+
+def run_git_command(args: List[str]) -> Tuple[int, bytes, bytes]:
+    try:
+        proc = subprocess.run(["git", *args], check=False, capture_output=True)
+        return proc.returncode, proc.stdout, proc.stderr
+    except FileNotFoundError:
+        return 1, b"", b"git not found"
+
+
+def ensure_in_git_repo() -> None:
+    code, out, _ = run_git_command(["rev-parse", "--is-inside-work-tree"])
+    if code != 0 or out.strip() != b"true":
+        print("Error: Not a git repository (or any of the parent directories).", file=sys.stderr)
+        sys.exit(1)
+
+
+def parse_status_porcelain_z() -> List[dict]:
+    """Parse `git status --porcelain=v1 -z -uall` into a list of entries.
+
+    Each entry is a dict with keys: xy, path, old_path (optional for R/C).
+    Uses NUL-delimited format to be robust to special characters.
+    """
+    code, out, err = run_git_command(["status", "--porcelain=v1", "-z", "-uall"])
+    if code != 0:
+        msg = err.decode("utf-8", "replace").strip() or "git status failed"
+        print(f"Error: {msg}", file=sys.stderr)
+        sys.exit(1)
+
+    if not out:
+        return []
+
+    tokens = out.split(b"\x00")
+    if tokens and tokens[-1] == b"":
+        tokens.pop()
+
+    entries: List[dict] = []
+    i = 0
+    while i < len(tokens):
+        t = tokens[i].decode("utf-8", "surrogateescape")
+        i += 1
+        if len(t) < 3:
+            # Unexpected, skip
+            continue
+        xy = t[:2]
+        path1 = t[3:] if len(t) > 3 else ""
+        if xy[0] in ("R", "C"):
+            # Next token is the new path
+            new_path = ""
+            if i < len(tokens):
+                new_path = tokens[i].decode("utf-8", "surrogateescape")
+                i += 1
+            entries.append({"xy": xy, "path": new_path, "old_path": path1})
+        else:
+            entries.append({"xy": xy, "path": path1, "old_path": None})
+    return entries
+
+
+def compute_status_symbol(xy: str) -> str:
+    # Untracked
+    if xy == "??":
+        return "?"
+    # Ignored (usually not present without --ignored)
+    if xy == "!!":
+        return "!"
+    # Unmerged/conflicted
+    if xy in {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}:
+        return "U"
+    # Rename/Copy
+    if xy[0] in ("R", "C"):
+        return xy[0]
+    # Deletion has priority
+    if "D" in xy:
+        return "D"
+    # Addition next
+    if "A" in xy:
+        return "A"
+    # Type change
+    if "T" in xy:
+        return "T"
+    # Modified
+    if "M" in xy:
+        return "M"
+    # Fallback
+    return xy.strip() or "?"
+
+
+@dataclass
+class FileEntry:
+    name: str
+    status: str
+    old_path: Optional[str] = None
+    state: str = "changed"  # one of: untracked, staged, changed, ignored
+
+
+@dataclass
+class DirNode:
+    name: str
+    directories: Dict[str, "DirNode"] = field(default_factory=dict)
+    files: Dict[str, FileEntry] = field(default_factory=dict)
+
+    def add_file(self, path: str, status: str, old_path: Optional[str], state: str) -> None:
+        parts = [p for p in path.split("/") if p]
+        if not parts:
+            return
+        current: DirNode = self
+        for part in parts[:-1]:
+            if part not in current.directories:
+                current.directories[part] = DirNode(name=part)
+            current = current.directories[part]
+        leaf = parts[-1]
+        current.files[leaf] = FileEntry(name=leaf, status=status, old_path=old_path, state=state)
+
+
+def classify_state(xy: str) -> str:
+    # Explicit untracked/ignored
+    if xy == "??":
+        return "untracked"
+    if xy == "!!":
+        return "ignored"
+    # Unmerged/conflicted considered changed
+    if xy in {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}:
+        return "changed"
+    # Porcelain columns: X = index (staged), Y = worktree (changed)
+    x, y = xy[0], xy[1]
+    if y != " ":
+        return "changed"
+    if x != " ":
+        return "staged"
+    return "changed"
+
+
+def should_use_color() -> bool:
+    # FORCE_COLOR overrides; if set and not "0", always color
+    force = os.environ.get("FORCE_COLOR")
+    if force is not None and force != "0":
+        return True
+    # Respect NO_COLOR if set; otherwise use color in TTY by default
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    return sys.stdout.isatty()
+
+
+def color_for_state(state: str) -> str:
+    # ANSI colors
+    if state == "untracked":
+        return "\033[37m"  # white
+    if state == "staged":
+        return "\033[32m"  # green
+    # changed, ignored, default
+    return "\033[31m"      # red
+
+
+RESET_COLOR = "\033[0m"
+
+
+def print_tree(node: DirNode, prefix: str = "", use_color: bool = True) -> None:
+    # Order: directories first, then files; both sorted by name
+    dir_names = sorted(node.directories.keys())
+    file_names = sorted(node.files.keys())
+    items: List[Tuple[str, str]] = [("dir", n) for n in dir_names] + [("file", n) for n in file_names]
+
+    for idx, (kind, name) in enumerate(items):
+        is_last = idx == len(items) - 1
+        connector = "└── " if is_last else "├── "
+        if kind == "dir":
+            print(f"{prefix}{connector}{name}/")
+            next_prefix = f"{prefix}{'    ' if is_last else '│   '}"
+            print_tree(node.directories[name], next_prefix, use_color)
+        else:
+            entry = node.files[name]
+            # Detail for rename/copy
+            detail = ""
+            if entry.status == "R" and entry.old_path:
+                detail = f" (from {entry.old_path})"
+            elif entry.status == "C" and entry.old_path:
+                detail = f" (copied from {entry.old_path})"
+            if use_color:
+                color = color_for_state(entry.state)
+                print(f"{prefix}{connector}{color}{name} [{entry.status}]{detail}{RESET_COLOR}")
+            else:
+                print(f"{prefix}{connector}{name} [{entry.status}]{detail}")
+
+
+def main() -> None:
+    ensure_in_git_repo()
+    entries = parse_status_porcelain_z()
+    if not entries:
+        print("No changes")
+        return
+
+    root = DirNode(name=".")
+    for e in entries:
+        xy = e["xy"]
+        path = e["path"]
+        old_path = e["old_path"]
+        status = compute_status_symbol(xy)
+        state = classify_state(xy)
+        root.add_file(path, status, old_path, state)
+    use_color = should_use_color()
+    print_tree(root, "", use_color)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
+

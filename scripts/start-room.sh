@@ -92,6 +92,11 @@ process.exit(pkg.version === "0.75.5" ? 0 : 1);
     return 0
   fi
 
+  if ! docker exec "$CONTAINER" test -d /opt/oh-my-zsh/custom/themes/powerlevel10k >/dev/null 2>&1; then
+    echo "missing-powerlevel10k"
+    return 0
+  fi
+
   if ! docker exec "$CONTAINER" test -d /opt/oh-my-zsh/custom/plugins/zsh-autosuggestions >/dev/null 2>&1; then
     echo "missing-zsh-autosuggestions"
     return 0
@@ -99,6 +104,11 @@ process.exit(pkg.version === "0.75.5" ? 0 : 1);
 
   if ! docker exec "$CONTAINER" test -d /opt/oh-my-zsh/custom/plugins/zsh-syntax-highlighting >/dev/null 2>&1; then
     echo "missing-zsh-syntax-highlighting"
+    return 0
+  fi
+
+  if ! docker exec "$CONTAINER" sh -lc 'command -v zoxide' >/dev/null 2>&1; then
+    echo "missing-zoxide"
     return 0
   fi
 }

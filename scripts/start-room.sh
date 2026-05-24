@@ -86,6 +86,21 @@ process.exit(pkg.version === "0.75.5" ? 0 : 1);
     echo "pi-not-0.75.5"
     return 0
   fi
+
+  if ! docker exec "$CONTAINER" test -f /opt/oh-my-zsh/oh-my-zsh.sh >/dev/null 2>&1; then
+    echo "missing-oh-my-zsh"
+    return 0
+  fi
+
+  if ! docker exec "$CONTAINER" test -d /opt/oh-my-zsh/custom/plugins/zsh-autosuggestions >/dev/null 2>&1; then
+    echo "missing-zsh-autosuggestions"
+    return 0
+  fi
+
+  if ! docker exec "$CONTAINER" test -d /opt/oh-my-zsh/custom/plugins/zsh-syntax-highlighting >/dev/null 2>&1; then
+    echo "missing-zsh-syntax-highlighting"
+    return 0
+  fi
 }
 
 # Restart existing bash-detached containers. Recreate old rooms that were created

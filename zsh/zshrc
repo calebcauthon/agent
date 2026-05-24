@@ -1,0 +1,35 @@
+# Shared zsh defaults for rooms agents.
+# This file is copied to /home/the_agent/.zshrc and sourced by each
+# per-agent session rc at /sessions/<agent>/.zshrc.
+
+export ROOMS_ZSH_DIR="${ROOMS_ZSH_DIR:-$HOME/.rooms-zsh}"
+export ZSH="${ZSH:-/opt/oh-my-zsh}"
+export ZSH_DISABLE_COMPFIX=true
+DISABLE_AUTO_UPDATE="true"
+DISABLE_UPDATE_PROMPT="true"
+HIST_STAMPS="yyyy-mm-dd"
+
+# Keep the prompt readable in bare terminals, but nicer than stock bash.
+ZSH_THEME="${ZSH_THEME:-bira}"
+
+plugins=(git docker npm node)
+[ -d "$ZSH/custom/plugins/zsh-autosuggestions" ] && plugins+=(zsh-autosuggestions)
+[ -d "$ZSH/custom/plugins/zsh-syntax-highlighting" ] && plugins+=(zsh-syntax-highlighting)
+
+if [ -f "$ZSH/oh-my-zsh.sh" ]; then
+  source "$ZSH/oh-my-zsh.sh"
+else
+  autoload -Uz compinit && compinit -i
+fi
+
+# Rooms-provided customizations.
+[ -f "$ROOMS_ZSH_DIR/custom/aliases.zsh" ] && source "$ROOMS_ZSH_DIR/custom/aliases.zsh"
+[ -f "$ROOMS_ZSH_DIR/custom/functions.zsh" ] && source "$ROOMS_ZSH_DIR/custom/functions.zsh"
+
+# Optional machine/user and project hooks. These are intentionally quiet.
+[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
+[ -f "$PWD/.rooms.zshrc" ] && source "$PWD/.rooms.zshrc"
+[ -f "$PWD/.agent.zshrc" ] && source "$PWD/.agent.zshrc"
+
+export EDITOR="${EDITOR:-vim}"
+export PAGER="${PAGER:-less}"

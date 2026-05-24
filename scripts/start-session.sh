@@ -5,6 +5,7 @@ ROOM="${1:?Usage: agent <room> [agent-name]}"
 PROJECT="${PROJECT:-$PWD}"
 PROJECT_NAME="$(basename "$PROJECT")"
 PROJECT_ENV_FILE="${PROJECT}/.env"
+ROOMS_DIR="${_ROOMS_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 # Accept either the full container name or just the room name
 if docker inspect "$ROOM" &>/dev/null 2>&1; then
@@ -48,13 +49,24 @@ docker exec "$CONTAINER" bash -c "
   else
     usermod -s /bin/zsh the_agent 2>/dev/null || true
   fi
-  mkdir -p /home/the_agent/.claude /sessions/${AGENT}
+  mkdir -p /home/the_agent/.claude /home/the_agent/.rooms-zsh /sessions/${AGENT}
   chown the_agent:the_agent /home/the_agent 2>/dev/null || true
-  chown -R the_agent:the_agent /home/the_agent/.claude /sessions 2>/dev/null || true
+  chown -R the_agent:the_agent /home/the_agent/.claude /home/the_agent/.rooms-zsh /sessions 2>/dev/null || true
 "
 
+# Copy in shared zsh settings. Per-agent rc files source /home/the_agent/.zshrc.
+ZSH_CONFIG_DIR="${ROOMS_DIR}/zsh"
+if [ -f "${ZSH_CONFIG_DIR}/zshrc" ]; then
+  docker cp "${ZSH_CONFIG_DIR}/zshrc" "$CONTAINER":/home/the_agent/.zshrc
+  if [ -d "${ZSH_CONFIG_DIR}/custom" ]; then
+    docker exec "$CONTAINER" rm -rf /home/the_agent/.rooms-zsh/custom
+    docker cp "${ZSH_CONFIG_DIR}/custom" "$CONTAINER":/home/the_agent/.rooms-zsh/custom
+  fi
+  docker exec "$CONTAINER" chown -R the_agent:the_agent /home/the_agent/.zshrc /home/the_agent/.rooms-zsh
+fi
+
 # Copy in claude settings (base from rooms, overridden by project if present)
-CLAUDE_SETTINGS="${_ROOMS_DIR:-$(cd "$(dirname "$0")/.." && pwd)}/claude-settings.json"
+CLAUDE_SETTINGS="${ROOMS_DIR}/claude-settings.json"
 docker cp "$CLAUDE_SETTINGS" "$CONTAINER":/home/the_agent/.claude/settings.json
 docker exec "$CONTAINER" chown the_agent:the_agent /home/the_agent/.claude/settings.json
 

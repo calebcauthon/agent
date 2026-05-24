@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Add to ~/.zshrc:  source ~/code/rooms/shell.sh
 
-_ROOMS_DIR="${HOME}/code/rooms"
+# Directory containing this repo's scripts/config. Homebrew wrappers set _ROOMS_DIR;
+# local installs can set ROOMS_DIR; otherwise keep the historical checkout path.
+_ROOMS_DIR="${_ROOMS_DIR:-${ROOMS_DIR:-${HOME}/code/rooms}}"
 
 _rooms_project_slug() {
   local slug

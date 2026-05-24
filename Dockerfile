@@ -6,11 +6,36 @@ ENV SHELL=/bin/zsh \
   LC_ALL=C.UTF-8 \
   TERM=xterm-256color \
   COLORTERM=truecolor \
-  ROOMS_IMAGE_VERSION=node-22.19.0_pi-0.75.5_ohmyzsh_utf8
+  NONINTERACTIVE=1 \
+  HOMEBREW_NO_ANALYTICS=1 \
+  HOMEBREW_NO_ENV_HINTS=1 \
+  ROOMS_IMAGE_VERSION=node-22.19.0_pi-0.75.5_ohmyzsh_utf8_homebrew
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends tmux git zsh zoxide less iproute2 ca-certificates \
+  && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    file \
+    git \
+    iproute2 \
+    less \
+    procps \
+    shellcheck \
+    sudo \
+    tmux \
+    zoxide \
+    zsh \
   && rm -rf /var/lib/apt/lists/*
+
+RUN usermod -aG sudo node \
+  && echo 'node ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/node \
+  && chmod 0440 /etc/sudoers.d/node
+
+USER node
+RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
+USER root
 
 RUN git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh \
   && git clone --depth=1 https://github.com/romkatv/powerlevel10k.git /opt/oh-my-zsh/custom/themes/powerlevel10k \

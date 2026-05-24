@@ -63,9 +63,34 @@ PORT="$(choose_port)"
 export PORT
 echo "$PORT" > "$PORT_FILE"
 
+room_recreate_reason() {
+  if ! docker exec "$CONTAINER" command -v zsh >/dev/null 2>&1; then
+    echo "missing-zsh"
+    return 0
+  fi
+
+  if ! docker exec "$CONTAINER" node -e '
+const [major, minor, patch] = process.versions.node.split(".").map(Number);
+process.exit(major > 22 || (major === 22 && (minor > 19 || (minor === 19 && patch >= 0))) ? 0 : 1);
+' >/dev/null 2>&1; then
+    echo "node-too-old"
+    return 0
+  fi
+
+  if ! docker exec "$CONTAINER" node -e '
+const cp = require("child_process");
+const root = cp.execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+const pkg = require(root + "/@earendil-works/pi-coding-agent/package.json");
+process.exit(pkg.version === "0.75.5" ? 0 : 1);
+' >/dev/null 2>&1; then
+    echo "pi-not-0.75.5"
+    return 0
+  fi
+}
+
 # Restart existing bash-detached containers. Recreate old rooms that were created
-# with a foreground dev command or a broken git mount so `room <name>` always
-# leaves a healthy shell alive for agents.
+# with a foreground dev command, a broken git mount, or an outdated runtime so
+# `agent ...` always leaves a healthy shell alive for agents.
 if docker inspect "$CONTAINER" &>/dev/null; then
   CONTAINER_CMD="$(docker inspect "$CONTAINER" --format '{{json .Config.Cmd}}')"
   if [ "$CONTAINER_CMD" = '["bash"]' ]; then
@@ -74,18 +99,23 @@ if docker inspect "$CONTAINER" &>/dev/null; then
       docker start "$CONTAINER" >/dev/null
     fi
 
-    if docker exec "$CONTAINER" git -C "$WORKTREE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    RECREATE_REASON="$(room_recreate_reason)"
+    if [ -n "$RECREATE_REASON" ]; then
+      echo "container=${CONTAINER}"
+      echo "status=recreating-${RECREATE_REASON}"
+      docker rm -f "$CONTAINER" >/dev/null
+    elif docker exec "$CONTAINER" git -C "$WORKTREE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
       register_portless_alias
       echo "container=${CONTAINER}"
       echo "status=running-detached"
       echo "port=${PORT}"
-      echo "next=agent ${ROOM}"
+      echo "next=agent -r ${ROOM}"
       exit 0
+    else
+      echo "container=${CONTAINER}"
+      echo "status=recreating-broken-git-mount"
+      docker rm -f "$CONTAINER" >/dev/null
     fi
-
-    echo "container=${CONTAINER}"
-    echo "status=recreating-broken-git-mount"
-    docker rm -f "$CONTAINER" >/dev/null
   else
     echo "container=${CONTAINER}"
     echo "status=recreating-non-detached-room"
@@ -102,13 +132,23 @@ fi
 
 COMMON_GIT_DIR="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)"
 
-DOCKER_ENV_ARGS=()
+DOCKER_RUN_ARGS=(
+  --name "$CONTAINER"
+  -p "${PORT}:3000"
+  -v "${WORKTREE}:${WORKTREE}"
+  -v "${PROJECT_NAME}-node-${ROOM}:${WORKTREE}/node_modules"
+  -v "${SESSIONS_DIR}:/sessions"
+  -v "${CLAUDE_DATA_DIR}:/home/the_agent/.claude"
+  -v "${COMMON_GIT_DIR}:${COMMON_GIT_DIR}:ro"
+  -w "${WORKTREE}"
+)
 if [ -f "$PROJECT_ENV_FILE" ]; then
-  DOCKER_ENV_ARGS+=(--env-file "$PROJECT_ENV_FILE")
+  DOCKER_RUN_ARGS+=(--env-file "$PROJECT_ENV_FILE")
 fi
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  DOCKER_ENV_ARGS+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
+  DOCKER_RUN_ARGS+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
 fi
+DOCKER_RUN_ARGS+=("${PROJECT_NAME}-room" bash)
 
 # Use project's Dockerfile if it has one, otherwise fall back to rooms default
 if [ -f "${PROJECT}/Dockerfile" ]; then
@@ -118,18 +158,7 @@ else
 fi
 
 # Keep the room alive with a detached bash process. Agents attach later via tmux.
-docker run -dit \
-  --name "$CONTAINER" \
-  -p "${PORT}:3000" \
-  -v "${WORKTREE}:${WORKTREE}" \
-  -v "${PROJECT_NAME}-node-${ROOM}:${WORKTREE}/node_modules" \
-  -v "${SESSIONS_DIR}:/sessions" \
-  -v "${CLAUDE_DATA_DIR}:/home/the_agent/.claude" \
-  -v "${COMMON_GIT_DIR}:${COMMON_GIT_DIR}:ro" \
-  -w "${WORKTREE}" \
-  "${DOCKER_ENV_ARGS[@]}" \
-  "${PROJECT_NAME}-room" \
-  bash >/dev/null
+docker run -dit "${DOCKER_RUN_ARGS[@]}" >/dev/null
 
 register_portless_alias
 echo "container=${CONTAINER}"
@@ -140,5 +169,5 @@ echo "worktree=${WORKTREE}"
 if [ -f "$PROJECT_ENV_FILE" ]; then
   echo "env_file=${PROJECT_ENV_FILE}"
 fi
-echo "next=agent ${ROOM}"
+echo "next=agent -r ${ROOM}"
 echo "dev_command=npm install && npm run dev -- -H 0.0.0.0"

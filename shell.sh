@@ -22,22 +22,39 @@ room() {
 
 agent() {
   local room_name agent_name
+  room_name="$(_rooms_default_room)"
+  agent_name=""
 
-  case "$#" in
-    0)
-      room_name="$(_rooms_default_room)"
-      agent_name=""
-      ;;
-    1)
-      room_name="$(_rooms_default_room)"
-      agent_name="$1"
-      ;;
-    *)
-      # Back-compat: agent <room> <agent-name>
-      room_name="$1"
-      agent_name="$2"
-      ;;
-  esac
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -r|--room)
+        shift
+        if [ "$#" -eq 0 ]; then
+          echo "Usage: agent [agent-name] [-r room-name]" >&2
+          return 2
+        fi
+        room_name="$1"
+        ;;
+      -h|--help)
+        echo "Usage: agent [agent-name] [-r room-name]"
+        echo "  agent                 # random agent in the default room"
+        echo "  agent ada             # named agent in the default room"
+        echo "  agent ada -r feature  # named agent in room 'feature'"
+        echo "  agent -r feature      # random agent in room 'feature'"
+        return 0
+        ;;
+      *)
+        if [ -z "$agent_name" ]; then
+          agent_name="$1"
+        else
+          echo "Usage: agent [agent-name] [-r room-name]" >&2
+          echo "  For named rooms use: agent ${agent_name} -r $1" >&2
+          return 2
+        fi
+        ;;
+    esac
+    shift
+  done
 
   PROJECT="$PWD" bash "${_ROOMS_DIR}/scripts/start-room.sh" "$room_name"
   PROJECT="$PWD" bash "${_ROOMS_DIR}/scripts/start-session.sh" "$room_name" "$agent_name"

@@ -34,10 +34,19 @@ fi
 echo "agent '${AGENT}' in room '${ROOM}' (${PROJECT_NAME})"
 WORKDIR="$(docker inspect "$CONTAINER" --format '{{.Config.WorkingDir}}')"
 
-# Ensure the_agent user exists, owns /sessions, and has claude auto-authorized
+# Ensure the_agent user exists, uses zsh, owns /sessions, and has claude auto-authorized.
+if ! docker exec "$CONTAINER" command -v zsh >/dev/null 2>&1; then
+  echo "Room '${ROOM}' does not have zsh installed. Rebuild/recreate it with:"
+  echo "  rooms rm ${CONTAINER}"
+  echo "  agent ${AGENT} -r ${ROOM}"
+  exit 1
+fi
+
 docker exec "$CONTAINER" bash -c "
   if ! id the_agent &>/dev/null; then
-    useradd -m -s /bin/bash the_agent
+    useradd -m -s /bin/zsh the_agent
+  else
+    usermod -s /bin/zsh the_agent 2>/dev/null || true
   fi
   mkdir -p /home/the_agent/.claude /sessions/${AGENT}
   chown the_agent:the_agent /home/the_agent 2>/dev/null || true
@@ -66,30 +75,28 @@ if ! docker exec -u the_agent "$CONTAINER" git -C "$WORKDIR" rev-parse --is-insi
 fi
 
 docker exec "$CONTAINER" bash -c "
-  {
-    echo 'export HISTFILE=/sessions/${AGENT}/.bash_history'
-    echo 'export HISTSIZE=50000'
-    echo 'export HISTFILESIZE=50000'
-    echo \"export PROMPT_COMMAND='history -a'\"
-    echo \"trap 'history -a' EXIT\"
-    echo 'export ANTHROPIC_API_KEY=\${ANTHROPIC_API_KEY:-}'
-    echo 'history -r 2>/dev/null || true'
-    echo '[ -f /home/the_agent/.bashrc ] && source /home/the_agent/.bashrc'
-  } > /sessions/${AGENT}/init.sh
-  chown the_agent:the_agent /sessions/${AGENT}/init.sh
+  cat > /sessions/${AGENT}/.zshrc <<'EOF'
+export HISTFILE=/sessions/${AGENT}/.zsh_history
+export HISTSIZE=50000
+export SAVEHIST=50000
+setopt append_history inc_append_history share_history hist_ignore_dups 2>/dev/null || true
+export ANTHROPIC_API_KEY=\${ANTHROPIC_API_KEY:-}
+[ -f /home/the_agent/.zshrc ] && source /home/the_agent/.zshrc
+EOF
+  chown the_agent:the_agent /sessions/${AGENT}/.zshrc
 "
 
-EXEC_ENV_ARGS=()
+DOCKER_EXEC_ARGS=(-it -u the_agent)
 if [ -f "$PROJECT_ENV_FILE" ]; then
-  EXEC_ENV_ARGS+=(--env-file "$PROJECT_ENV_FILE")
+  DOCKER_EXEC_ARGS+=(--env-file "$PROJECT_ENV_FILE")
 fi
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-  EXEC_ENV_ARGS+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
+  DOCKER_EXEC_ARGS+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
 fi
 
 if [ -f "$PROJECT_ENV_FILE" ]; then
   echo "env_file=${PROJECT_ENV_FILE}"
 fi
 
-docker exec -it -u the_agent "${EXEC_ENV_ARGS[@]}" "$CONTAINER" \
-  tmux new-session -A -s "${AGENT}" "bash --init-file /sessions/${AGENT}/init.sh"
+docker exec "${DOCKER_EXEC_ARGS[@]}" "$CONTAINER" \
+  tmux new-session -A -s "${AGENT}" "ZDOTDIR=/sessions/${AGENT} zsh -l"

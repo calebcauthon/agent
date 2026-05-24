@@ -64,7 +64,7 @@ export PORT
 echo "$PORT" > "$PORT_FILE"
 
 room_recreate_reason() {
-  if ! docker exec "$CONTAINER" command -v zsh >/dev/null 2>&1; then
+  if ! docker exec "$CONTAINER" sh -lc 'command -v zsh' >/dev/null 2>&1; then
     echo "missing-zsh"
     return 0
   fi

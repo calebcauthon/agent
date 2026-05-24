@@ -35,7 +35,7 @@ echo "agent '${AGENT}' in room '${ROOM}' (${PROJECT_NAME})"
 WORKDIR="$(docker inspect "$CONTAINER" --format '{{.Config.WorkingDir}}')"
 
 # Ensure the_agent user exists, uses zsh, owns /sessions, and has claude auto-authorized.
-if ! docker exec "$CONTAINER" command -v zsh >/dev/null 2>&1; then
+if ! docker exec "$CONTAINER" sh -lc 'command -v zsh' >/dev/null 2>&1; then
   echo "Room '${ROOM}' does not have zsh installed. Rebuild/recreate it with:"
   echo "  rooms rm ${CONTAINER}"
   echo "  agent ${AGENT} -r ${ROOM}"

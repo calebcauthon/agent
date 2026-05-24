@@ -2,7 +2,11 @@ FROM node:22.19.0-bookworm
 
 ENV SHELL=/bin/zsh \
   ZSH=/opt/oh-my-zsh \
-  ROOMS_IMAGE_VERSION=node-22.19.0_pi-0.75.5_ohmyzsh
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  TERM=xterm-256color \
+  COLORTERM=truecolor \
+  ROOMS_IMAGE_VERSION=node-22.19.0_pi-0.75.5_ohmyzsh_utf8
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends tmux git zsh zoxide less iproute2 ca-certificates \

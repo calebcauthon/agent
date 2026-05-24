@@ -73,7 +73,7 @@ TMUX_CONFIG="${ROOMS_DIR}/tmux/tmux.conf"
 if [ -f "$TMUX_CONFIG" ]; then
   docker cp "$TMUX_CONFIG" "$CONTAINER":/home/the_agent/.tmux.conf
   docker exec "$CONTAINER" chown the_agent:the_agent /home/the_agent/.tmux.conf
-  docker exec -u the_agent "$CONTAINER" tmux source-file /home/the_agent/.tmux.conf >/dev/null 2>&1 || true
+  docker exec -u the_agent "$CONTAINER" tmux -u source-file /home/the_agent/.tmux.conf >/dev/null 2>&1 || true
 fi
 
 # Copy in claude settings (base from rooms, overridden by project if present)
@@ -109,7 +109,7 @@ EOF
   chown the_agent:the_agent /sessions/${AGENT}/.zshrc
 "
 
-DOCKER_EXEC_ARGS=(-it -u the_agent)
+DOCKER_EXEC_ARGS=(-it -u the_agent -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 -e TERM=xterm-256color -e COLORTERM=truecolor)
 if [ -f "$PROJECT_ENV_FILE" ]; then
   DOCKER_EXEC_ARGS+=(--env-file "$PROJECT_ENV_FILE")
 fi
@@ -122,4 +122,4 @@ if [ -f "$PROJECT_ENV_FILE" ]; then
 fi
 
 docker exec "${DOCKER_EXEC_ARGS[@]}" "$CONTAINER" \
-  tmux new-session -A -s "${AGENT}" "ZDOTDIR=/sessions/${AGENT} zsh -l"
+  tmux -u new-session -A -s "${AGENT}" "ZDOTDIR=/sessions/${AGENT} zsh -l"

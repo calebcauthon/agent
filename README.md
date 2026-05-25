@@ -35,6 +35,10 @@ agent --version
 room --version
 ```
 
+Codex CLI auth is shared by default across rooms via `~/.rooms/codex/global`, seeded once from host `~/.codex/auth.json` and `~/.codex/config.toml` when present. Override with `CODEX_AUTH_SCOPE=project`, `room`, or `none`.
+
+Pi auth is separate from Codex CLI auth. It is shared by default across rooms via `~/.rooms/pi/global`, seeded once from host `~/.pi/agent/auth.json`, `settings.json`, and `models.json` when present. Override with `PI_AUTH_SCOPE=project`, `room`, or `none`.
+
 If you prefer shell functions, add this to `~/.zshrc` after installing:
 
 ```sh

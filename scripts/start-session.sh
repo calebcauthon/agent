@@ -58,9 +58,9 @@ docker exec "$CONTAINER" bash -c "
   else
     usermod -s /bin/zsh the_agent 2>/dev/null || true
   fi
-  mkdir -p /home/the_agent/.claude /home/the_agent/.codex /home/the_agent/.rooms-zsh /sessions/${AGENT}
-  chown the_agent:the_agent /home/the_agent 2>/dev/null || true
-  chown -R the_agent:the_agent /home/the_agent/.claude /home/the_agent/.codex /home/the_agent/.rooms-zsh /sessions 2>/dev/null || true
+  mkdir -p /home/the_agent/.claude /home/the_agent/.codex /home/the_agent/.pi/agent /home/the_agent/.rooms-zsh /sessions/${AGENT}
+  chown the_agent:the_agent /home/the_agent /home/the_agent/.pi 2>/dev/null || true
+  chown -R the_agent:the_agent /home/the_agent/.claude /home/the_agent/.codex /home/the_agent/.pi/agent /home/the_agent/.rooms-zsh /sessions 2>/dev/null || true
 "
 
 # Copy in shared zsh settings. Per-agent rc files source /home/the_agent/.zshrc.

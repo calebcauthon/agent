@@ -12,6 +12,7 @@ PORT_FILE="${HOME}/.rooms/ports/${PROJECT_NAME}/${ROOM}"
 PROJECT_ENV_FILE="${PROJECT}/.env"
 
 CLAUDE_DATA_DIR="${HOME}/.rooms/claude/${PROJECT_NAME}/${ROOM}"
+
 CODEX_AUTH_SCOPE="${CODEX_AUTH_SCOPE:-global}"
 case "$CODEX_AUTH_SCOPE" in
   global) CODEX_DATA_DIR="${HOME}/.rooms/codex/global" ;;
@@ -23,10 +24,95 @@ case "$CODEX_AUTH_SCOPE" in
     exit 2
     ;;
 esac
+
+PI_AUTH_SCOPE="${PI_AUTH_SCOPE:-global}"
+case "$PI_AUTH_SCOPE" in
+  global) PI_DATA_DIR="${HOME}/.rooms/pi/global" ;;
+  project) PI_DATA_DIR="${HOME}/.rooms/pi/${PROJECT_NAME}" ;;
+  room) PI_DATA_DIR="${HOME}/.rooms/pi/${PROJECT_NAME}/${ROOM}" ;;
+  none) PI_DATA_DIR="" ;;
+  *)
+    echo "Invalid PI_AUTH_SCOPE='${PI_AUTH_SCOPE}' (use global, project, room, or none)" >&2
+    exit 2
+    ;;
+esac
+
 mkdir -p "$SESSIONS_DIR" "$CLAUDE_DATA_DIR" "$(dirname "$PORT_FILE")"
+
+seed_auth_file() {
+  local source_file="$1"
+  local target_file="$2"
+  local label="$3"
+  local target_contents=""
+
+  if [ ! -f "$source_file" ]; then
+    return 0
+  fi
+
+  if [ -f "$target_file" ]; then
+    target_contents="$(tr -d '[:space:]' < "$target_file" 2>/dev/null || true)"
+    if [ -n "$target_contents" ] && [ "$target_contents" != "{}" ]; then
+      return 0
+    fi
+  fi
+
+  cp -p "$source_file" "$target_file"
+  SEEDED_FILES="${SEEDED_FILES:+${SEEDED_FILES},}${label}"
+}
+
+CODEX_SEEDED_FILES=""
+SEEDED_FILES=""
 if [ -n "$CODEX_DATA_DIR" ]; then
   mkdir -p "$CODEX_DATA_DIR"
+
+  # Keep Codex CLI login usable in newly created rooms without mounting the whole
+  # host ~/.codex directory (which also contains logs, sessions, and caches).
+  HOST_CODEX_DIR="${HOME}/.codex"
+  for CODEX_SEED_FILE in auth.json config.toml; do
+    seed_auth_file "${HOST_CODEX_DIR}/${CODEX_SEED_FILE}" "${CODEX_DATA_DIR}/${CODEX_SEED_FILE}" "${CODEX_SEED_FILE}"
+  done
+  CODEX_SEEDED_FILES="$SEEDED_FILES"
 fi
+
+PI_SEEDED_FILES=""
+SEEDED_FILES=""
+if [ -n "$PI_DATA_DIR" ]; then
+  mkdir -p "$PI_DATA_DIR"
+
+  # Pi does not read ~/.codex/auth.json. Its ChatGPT/Codex OAuth and provider
+  # API keys live in ~/.pi/agent/auth.json, with defaults in settings/models.
+  # Seed only portable config/auth files, not host ~/.pi/agent/bin (macOS
+  # binaries would not run in Linux containers).
+  HOST_PI_DIR="${HOME}/.pi/agent"
+  for PI_SEED_FILE in auth.json settings.json models.json; do
+    seed_auth_file "${HOST_PI_DIR}/${PI_SEED_FILE}" "${PI_DATA_DIR}/${PI_SEED_FILE}" "${PI_SEED_FILE}"
+  done
+  PI_SEEDED_FILES="$SEEDED_FILES"
+fi
+unset SEEDED_FILES
+
+mount_source_matches() {
+  local actual="$1"
+  local expected="$2"
+
+  [ "$actual" = "$expected" ] || [ "$actual" = "/host_mnt${expected}" ]
+}
+
+print_auth_status() {
+  if [ -n "$CODEX_DATA_DIR" ]; then
+    echo "codex_auth=${CODEX_AUTH_SCOPE}:${CODEX_DATA_DIR}"
+    if [ -n "$CODEX_SEEDED_FILES" ]; then
+      printf 'codex_seeded_from_host=%s\n' "$CODEX_SEEDED_FILES"
+    fi
+  fi
+
+  if [ -n "$PI_DATA_DIR" ]; then
+    echo "pi_auth=${PI_AUTH_SCOPE}:${PI_DATA_DIR}"
+    if [ -n "$PI_SEEDED_FILES" ]; then
+      printf 'pi_seeded_from_host=%s\n' "$PI_SEEDED_FILES"
+    fi
+  fi
+}
 
 find_free_port() {
   python3 - <<'PY'
@@ -125,6 +211,22 @@ process.exit(pkg.version === "0.75.5" ? 0 : 1);
     echo "missing-zoxide"
     return 0
   fi
+
+  if [ -n "$CODEX_DATA_DIR" ]; then
+    CODEX_MOUNT_SOURCE="$(docker inspect "$CONTAINER" --format '{{range .Mounts}}{{if eq .Destination "/home/the_agent/.codex"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+    if ! mount_source_matches "$CODEX_MOUNT_SOURCE" "$CODEX_DATA_DIR"; then
+      echo "codex-auth-mount-changed"
+      return 0
+    fi
+  fi
+
+  if [ -n "$PI_DATA_DIR" ]; then
+    PI_MOUNT_SOURCE="$(docker inspect "$CONTAINER" --format '{{range .Mounts}}{{if eq .Destination "/home/the_agent/.pi/agent"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+    if ! mount_source_matches "$PI_MOUNT_SOURCE" "$PI_DATA_DIR"; then
+      echo "pi-auth-mount-changed"
+      return 0
+    fi
+  fi
 }
 
 # Restart existing bash-detached containers. Recreate old rooms that were created
@@ -143,11 +245,12 @@ if docker inspect "$CONTAINER" &>/dev/null; then
       echo "container=${CONTAINER}"
       echo "status=recreating-${RECREATE_REASON}"
       docker rm -f "$CONTAINER" >/dev/null
-    elif docker exec "$CONTAINER" git -C "$WORKTREE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    elif docker exec "$CONTAINER" git -c "safe.directory=${WORKTREE}" -C "$WORKTREE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
       register_portless_alias
       echo "container=${CONTAINER}"
       echo "status=running-detached"
       echo "port=${PORT}"
+      print_auth_status
       echo "next=agent -r ${ROOM}"
       exit 0
     else
@@ -219,6 +322,9 @@ DOCKER_RUN_ARGS=(
 if [ -n "$CODEX_DATA_DIR" ]; then
   DOCKER_RUN_ARGS+=(-v "${CODEX_DATA_DIR}:/home/the_agent/.codex")
 fi
+if [ -n "$PI_DATA_DIR" ]; then
+  DOCKER_RUN_ARGS+=(-v "${PI_DATA_DIR}:/home/the_agent/.pi/agent")
+fi
 if [ -f "$PROJECT_ENV_FILE" ]; then
   DOCKER_RUN_ARGS+=(--env-file "$PROJECT_ENV_FILE")
 fi
@@ -246,8 +352,6 @@ echo "worktree=${WORKTREE}"
 if [ -f "$PROJECT_ENV_FILE" ]; then
   echo "env_file=${PROJECT_ENV_FILE}"
 fi
-if [ -n "$CODEX_DATA_DIR" ]; then
-  echo "codex_auth=${CODEX_AUTH_SCOPE}:${CODEX_DATA_DIR}"
-fi
+print_auth_status
 echo "next=agent -r ${ROOM}"
 echo "dev_command=npm install && npm run dev -- -H 0.0.0.0"

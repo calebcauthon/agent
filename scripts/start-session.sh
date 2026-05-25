@@ -35,6 +35,15 @@ fi
 echo "agent '${AGENT}' in room '${ROOM}' (${PROJECT_NAME})"
 WORKDIR="$(docker inspect "$CONTAINER" --format '{{.Config.WorkingDir}}')"
 
+host_git_config() {
+  git -C "$PROJECT" config --get "$1" 2>/dev/null || true
+}
+
+GIT_AUTHOR_NAME="$(host_git_config user.name)"
+GIT_AUTHOR_EMAIL="$(host_git_config user.email)"
+GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Rooms Agent}"
+GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-rooms-agent@example.invalid}"
+
 # Ensure the_agent user exists, uses zsh, owns /sessions, and has claude auto-authorized.
 if ! docker exec "$CONTAINER" sh -lc 'command -v zsh' >/dev/null 2>&1; then
   echo "Room '${ROOM}' does not have zsh installed. Rebuild/recreate it with:"
@@ -89,7 +98,16 @@ if [ -f "$PROJECT_SETTINGS" ]; then
 fi
 
 # Make git usable for the non-root agent and fail clearly if the room was
-# created with a stale/broken git metadata mount.
+# created with a stale/broken git metadata mount. Copy the host/project git
+# identity into the agent account, falling back to a harmless default so commits
+# work even when the host has no author configured.
+docker exec -u the_agent \
+  -e "GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME}" \
+  -e "GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL}" \
+  "$CONTAINER" sh -lc '
+    git config --global user.name "$GIT_AUTHOR_NAME"
+    git config --global user.email "$GIT_AUTHOR_EMAIL"
+  ' >/dev/null
 docker exec -u the_agent "$CONTAINER" git config --global --add safe.directory "$WORKDIR" >/dev/null
 if ! docker exec -u the_agent "$CONTAINER" git -C "$WORKDIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "Room '${ROOM}' has a broken git mount. Repair it with:"

@@ -163,13 +163,45 @@ if docker inspect "$CONTAINER" &>/dev/null; then
   fi
 fi
 
-# Create isolated git worktree on its own branch
+# Create isolated git worktree on its own branch. Use a per-room ref directory
+# (`refs/heads/room/<room>/head`) so the container can write lockfiles for its
+# own branch without seeing sibling room branches.
+ROOM_BRANCH="room/${ROOM}/head"
 mkdir -p "$(dirname "$WORKTREE")"
 if [ ! -d "$WORKTREE" ]; then
-  git -C "$PROJECT" worktree add "$WORKTREE" -b "room/${ROOM}"
+  if git -C "$PROJECT" show-ref --verify --quiet "refs/heads/room/${ROOM}"; then
+    git -C "$PROJECT" worktree add "$WORKTREE" "room/${ROOM}"
+  else
+    git -C "$PROJECT" worktree add "$WORKTREE" -b "$ROOM_BRANCH"
+  fi
 fi
 
 COMMON_GIT_DIR="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir)"
+WORKTREE_GIT_DIR="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-dir)"
+CURRENT_BRANCH="$(git -C "$WORKTREE" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+
+# Migrate old room branches (`room/<room>`) to the isolated layout for existing
+# worktrees. This low-level move avoids the ref namespace conflict where the old
+# ref file blocks creating `room/<room>/head` as a child ref.
+if [ "$CURRENT_BRANCH" = "room/${ROOM}" ]; then
+  CURRENT_SHA="$(git -C "$WORKTREE" rev-parse HEAD)"
+  rm -f "${COMMON_GIT_DIR}/refs/heads/room/${ROOM}" "${COMMON_GIT_DIR}/logs/refs/heads/room/${ROOM}"
+  mkdir -p "${COMMON_GIT_DIR}/refs/heads/room/${ROOM}" "${COMMON_GIT_DIR}/logs/refs/heads/room/${ROOM}"
+  printf 'ref: refs/heads/%s\n' "$ROOM_BRANCH" > "${WORKTREE_GIT_DIR}/HEAD"
+  printf '%s\n' "$CURRENT_SHA" > "${COMMON_GIT_DIR}/refs/heads/${ROOM_BRANCH}"
+  : > "${COMMON_GIT_DIR}/logs/refs/heads/${ROOM_BRANCH}"
+  CURRENT_BRANCH="$ROOM_BRANCH"
+fi
+
+if [ "$CURRENT_BRANCH" != "$ROOM_BRANCH" ]; then
+  echo "Worktree ${WORKTREE} is on '${CURRENT_BRANCH:-detached}', expected '${ROOM_BRANCH}'." >&2
+  echo "Remove or move that worktree before starting this room." >&2
+  exit 1
+fi
+
+ROOM_BRANCH_REFS_DIR="${COMMON_GIT_DIR}/refs/heads/room/${ROOM}"
+ROOM_BRANCH_LOGS_DIR="${COMMON_GIT_DIR}/logs/refs/heads/room/${ROOM}"
+mkdir -p "${COMMON_GIT_DIR}/objects" "$ROOM_BRANCH_REFS_DIR" "$ROOM_BRANCH_LOGS_DIR"
 
 DOCKER_RUN_ARGS=(
   --name "$CONTAINER"
@@ -178,7 +210,10 @@ DOCKER_RUN_ARGS=(
   -v "${PROJECT_NAME}-node-${ROOM}:${WORKTREE}/node_modules"
   -v "${SESSIONS_DIR}:/sessions"
   -v "${CLAUDE_DATA_DIR}:/home/the_agent/.claude"
-  -v "${COMMON_GIT_DIR}:${COMMON_GIT_DIR}:ro"
+  -v "${WORKTREE_GIT_DIR}:${WORKTREE_GIT_DIR}"
+  -v "${COMMON_GIT_DIR}/objects:${COMMON_GIT_DIR}/objects"
+  -v "${ROOM_BRANCH_REFS_DIR}:${ROOM_BRANCH_REFS_DIR}"
+  -v "${ROOM_BRANCH_LOGS_DIR}:${ROOM_BRANCH_LOGS_DIR}"
   -w "${WORKTREE}"
 )
 if [ -n "$CODEX_DATA_DIR" ]; then
@@ -206,7 +241,7 @@ register_portless_alias
 echo "container=${CONTAINER}"
 echo "status=created-detached"
 echo "port=${PORT}"
-echo "branch=room/${ROOM}"
+echo "branch=${ROOM_BRANCH}"
 echo "worktree=${WORKTREE}"
 if [ -f "$PROJECT_ENV_FILE" ]; then
   echo "env_file=${PROJECT_ENV_FILE}"

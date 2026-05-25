@@ -151,7 +151,6 @@ candidates = [old_source_version]
 for pattern in (
     r'\bversion\s+["\'](\d+\.\d+\.\d+)["\']',
     r'\bv(\d+\.\d+\.\d+)\b',
-    r'\b(\d+\.\d+\.\d+)\b',
 ):
     match = re.search(pattern, text)
     if match:
@@ -170,9 +169,10 @@ PY
 
 update_formula_sha256() {
   local formula_file="$1"
-  local url sha
+  local url sha tmp_url
 
-  url="$(FORMULA_FILE="$formula_file" python3 <<'PY'
+  tmp_url="$(mktemp)"
+  FORMULA_FILE="$formula_file" python3 <<'PY' >"$tmp_url"
 import os
 import re
 from pathlib import Path
@@ -183,7 +183,8 @@ if not match:
     raise SystemExit("error: could not find a url line in the formula")
 print(match.group(1))
 PY
-)"
+  url="$(<"$tmp_url")"
+  rm -f "$tmp_url"
 
   case "$url" in
     http://*|https://*) ;;
@@ -194,7 +195,8 @@ PY
   esac
 
   echo "Downloading $url to calculate sha256..."
-  sha="$(curl -fsSL "$url" | shasum -a 256 | awk '{print $1}')"
+  sha="$(curl -fsSL "$url" | shasum -a 256)"
+  sha="${sha%% *}"
 
   FORMULA_FILE="$formula_file" SHA256="$sha" python3 <<'PY'
 import os
@@ -212,7 +214,7 @@ PY
 }
 
 [[ -f "$version_file" ]] || { echo "error: VERSION not found in current directory: $source_dir" >&2; exit 1; }
-old_version="$(tr -d '[:space:]' <"$version_file")"
+old_version="$(tr -d "[:space:]" <"$version_file")"
 new_version="${explicit_version:-$(semver_bump "$old_version" "$bump_part")}"
 
 if ! [[ "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

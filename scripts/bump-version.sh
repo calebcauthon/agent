@@ -131,10 +131,18 @@ detect_tap_dir() {
   exit 1
 }
 
+release_archive_url() {
+  local version="$1"
+  printf 'https://github.com/calebcauthon/agent/archive/refs/tags/v%s.tar.gz\n' "$version"
+}
+
 update_formula_version() {
   local formula_file="$1"
   local old_version="$2"
   local new_version="$3"
+  local archive_url
+
+  archive_url="$(release_archive_url "$new_version")"
 
   if ! grep -Fq "$old_version" "$formula_file"; then
     echo "error: old version $old_version not found in $formula_file" >&2
@@ -142,6 +150,7 @@ update_formula_version() {
   fi
 
   perl -0pi -e "s/\Q$old_version\E/$new_version/g" "$formula_file"
+  perl -0pi -e "s{^([[:blank:]]*)url[[:blank:]]+\"[^\"]+\"[^\n]*}{\${1}url \"$archive_url\"}m" "$formula_file"
 }
 
 update_formula_sha256() {
@@ -174,12 +183,18 @@ update_formula_sha256() {
   sha="${sha%% *}"
 
   sha_count="$(grep -Eoc "sha256[[:space:]]+\"[0-9a-fA-F]{64}\"" "$formula_file" || true)"
-  if [[ "$sha_count" != "1" ]]; then
-    echo "error: expected exactly one source sha256 line in $formula_file" >&2
-    exit 1
-  fi
-
-  perl -0pi -e "s/sha256\\s+\\\"[0-9a-fA-F]{64}\\\"/sha256 \\\"$sha\\\"/" "$formula_file"
+  case "$sha_count" in
+    0)
+      perl -0pi -e "s{(^[[:blank:]]*url[^\n]*\n)}{\${1}  sha256 \"$sha\"\n}m" "$formula_file"
+      ;;
+    1)
+      perl -0pi -e "s/sha256\\s+\\\"[0-9a-fA-F]{64}\\\"/sha256 \\\"$sha\\\"/" "$formula_file"
+      ;;
+    *)
+      echo "error: expected at most one source sha256 line in $formula_file; found $sha_count" >&2
+      exit 1
+      ;;
+  esac
 }
 
 [[ -f "$version_file" ]] || { echo "error: VERSION not found in current directory: $source_dir" >&2; exit 1; }

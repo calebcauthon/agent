@@ -1,19 +1,18 @@
 # Homebrew install
 
-This repo includes a Homebrew formula at `Formula/agent.rb`.
+Homebrew packaging for `agent` lives in a separate tap repo, not in this source repo.
 
-## Install directly from this git repo
-
-Once the formula is pushed to GitHub, install with:
+## Install
 
 ```sh
-brew install https://raw.githubusercontent.com/calebcauthon/agent/main/Formula/agent.rb
+brew tap calebcauthon/agent
+brew install agent
 ```
 
-For the latest `main` version:
+Or install in one command:
 
 ```sh
-brew install --HEAD https://raw.githubusercontent.com/calebcauthon/agent/main/Formula/agent.rb
+brew install calebcauthon/agent/agent
 ```
 
 After install, these commands should be available:
@@ -34,66 +33,22 @@ room --version
 rooms --version
 ```
 
-## Tap-style install
-
-You can also add the repo as a tap:
-
-```sh
-brew tap calebcauthon/agent https://github.com/calebcauthon/agent
-brew install agent
-```
-
-If this becomes a dedicated Homebrew tap repo, the conventional repo name would be:
-
-```txt
-homebrew-agent
-```
-
-Then users could install with:
-
-```sh
-brew install calebcauthon/agent/agent
-```
-
 ## Releasing a new version
 
-Bump both files together:
-
-```txt
-VERSION
-Formula/agent.rb
-```
-
-Example release:
+1. In this source repo, update `VERSION`.
+2. Commit, tag, and push the source release:
 
 ```sh
-printf '0.1.1\n' > VERSION
-# edit Formula/agent.rb: version "0.1.1"
-
-git add VERSION Formula/agent.rb
+git add VERSION
 git commit -m "Release v0.1.1"
 git tag v0.1.1
 git push origin main --tags
 ```
 
-For stable installs, point the formula at the tag instead of `main`:
-
-```rb
-url "https://github.com/calebcauthon/agent.git", tag: "v0.1.1"
-version "0.1.1"
-```
-
-Then users get that exact version when they install normally.
+3. In the separate Homebrew tap repo, update the `agent` formula to point at the new tag/version.
+4. Push the tap repo change.
 
 ## Updating after install
-
-If installed from a raw formula URL:
-
-```sh
-brew reinstall https://raw.githubusercontent.com/calebcauthon/agent/main/Formula/agent.rb
-```
-
-If installed from a tap:
 
 ```sh
 brew update

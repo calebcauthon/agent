@@ -4,10 +4,17 @@ Docker-backed isolated coding-agent rooms.
 
 ## Install with Homebrew
 
-From this repo/branch:
+Homebrew packaging lives in a separate tap repo, not in this source repo.
 
 ```sh
-brew install --HEAD https://raw.githubusercontent.com/calebcauthon/agent/main/Formula/agent.rb
+brew tap calebcauthon/agent
+brew install agent
+```
+
+Or install in one command:
+
+```sh
+brew install calebcauthon/agent/agent
 ```
 
 After install, these commands are available:
@@ -37,14 +44,22 @@ source "$(brew --prefix agent)/libexec/shell.sh"
 
 ## Releasing a new version
 
-1. Update `VERSION`.
-2. Update `version` in `Formula/agent.rb` to match.
-3. Commit, tag, and push:
+The source release and Homebrew formula are maintained separately:
+
+1. Update `VERSION` in this repo.
+2. Commit, tag, and push the source release:
 
 ```sh
-git commit -am "Release v0.1.1"
+git add VERSION
+git commit -m "Release v0.1.1"
 git tag v0.1.1
 git push origin main --tags
 ```
 
-For a stable formula, point `url` in `Formula/agent.rb` at the tag instead of the branch, e.g. `tag: "v0.1.1"`.
+3. In the separate Homebrew tap repo, update the `agent` formula to point at the new tag/version.
+4. Users can then update with:
+
+```sh
+brew update
+brew upgrade agent
+```

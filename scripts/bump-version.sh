@@ -2,16 +2,15 @@
 set -euo pipefail
 
 usage() {
-  cat <<'USAGE'
-Usage: scripts/bump-version.sh [--patch|--minor|--major|VERSION] [--tap-dir DIR]
-
-Defaults to a patch bump from ./VERSION (for example, 0.1.2 -> 0.1.3).
-
-Environment:
-  TAP_DIR   Path to the Homebrew tap checkout. If unset, the script tries
-            `brew --repository calebcauthon/agent`.
-  REMOTE    Remote to use when a repo has no upstream configured (default: origin).
-USAGE
+  printf '%s\n' \
+    'Usage: scripts/bump-version.sh [--patch|--minor|--major|VERSION] [--tap-dir DIR]' \
+    '' \
+    'Defaults to a patch bump from ./VERSION (for example, 0.1.2 -> 0.1.3).' \
+    '' \
+    'Environment:' \
+    '  TAP_DIR   Path to the Homebrew tap checkout. If unset, the script tries' \
+    "            \`brew --repository calebcauthon/agent\`." \
+    '  REMOTE    Remote to use when a repo has no upstream configured (default: origin).'
 }
 
 bump_part="patch"
@@ -137,54 +136,30 @@ update_formula_version() {
   local old_version="$2"
   local new_version="$3"
 
-  FORMULA_FILE="$formula_file" OLD_VERSION="$old_version" NEW_VERSION="$new_version" python3 <<'PY'
-import os
-import re
-from pathlib import Path
+  if ! grep -Fq "$old_version" "$formula_file"; then
+    echo "error: old version $old_version not found in $formula_file" >&2
+    exit 1
+  fi
 
-path = Path(os.environ["FORMULA_FILE"])
-old_source_version = os.environ["OLD_VERSION"]
-new_version = os.environ["NEW_VERSION"]
-text = path.read_text()
-
-candidates = [old_source_version]
-for pattern in (
-    r'\bversion\s+["\'](\d+\.\d+\.\d+)["\']',
-    r'\bv(\d+\.\d+\.\d+)\b',
-):
-    match = re.search(pattern, text)
-    if match:
-        candidates.append(match.group(1))
-
-updated = text
-for old_version in sorted(set(candidates), key=len, reverse=True):
-    updated = re.sub(rf'(?<!\d){re.escape(old_version)}(?!\d)', new_version, updated)
-
-if updated == text:
-    raise SystemExit(f"error: no version string updated in {path}")
-
-path.write_text(updated)
-PY
+  perl -0pi -e "s/\Q$old_version\E/$new_version/g" "$formula_file"
 }
 
 update_formula_sha256() {
   local formula_file="$1"
-  local url sha tmp_url
+  local url=""
+  local sha sha_count line
 
-  tmp_url="$(mktemp)"
-  FORMULA_FILE="$formula_file" python3 <<'PY' >"$tmp_url"
-import os
-import re
-from pathlib import Path
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^[[:space:]]*url[[:space:]]+\"([^\"]+)\" ]]; then
+      url="${BASH_REMATCH[1]}"
+      break
+    fi
+  done <"$formula_file"
 
-text = Path(os.environ["FORMULA_FILE"]).read_text()
-match = re.search(r'^\s*url\s+["\']([^"\']+)["\']', text, re.MULTILINE)
-if not match:
-    raise SystemExit("error: could not find a url line in the formula")
-print(match.group(1))
-PY
-  url="$(<"$tmp_url")"
-  rm -f "$tmp_url"
+  if [[ -z "$url" ]]; then
+    echo "error: could not find a double-quoted url line in $formula_file" >&2
+    exit 1
+  fi
 
   case "$url" in
     http://*|https://*) ;;
@@ -198,19 +173,13 @@ PY
   sha="$(curl -fsSL "$url" | shasum -a 256)"
   sha="${sha%% *}"
 
-  FORMULA_FILE="$formula_file" SHA256="$sha" python3 <<'PY'
-import os
-import re
-from pathlib import Path
+  sha_count="$(grep -Eoc "sha256[[:space:]]+\"[0-9a-fA-F]{64}\"" "$formula_file" || true)"
+  if [[ "$sha_count" != "1" ]]; then
+    echo "error: expected exactly one source sha256 line in $formula_file" >&2
+    exit 1
+  fi
 
-path = Path(os.environ["FORMULA_FILE"])
-sha = os.environ["SHA256"]
-text = path.read_text()
-updated, count = re.subn(r'sha256\s+["\'][0-9a-fA-F]{64}["\']', f'sha256 "{sha}"', text, count=1)
-if count != 1:
-    raise SystemExit(f"error: expected exactly one source sha256 line in {path}")
-path.write_text(updated)
-PY
+  perl -0pi -e "s/sha256\\s+\\\"[0-9a-fA-F]{64}\\\"/sha256 \\\"$sha\\\"/" "$formula_file"
 }
 
 [[ -f "$version_file" ]] || { echo "error: VERSION not found in current directory: $source_dir" >&2; exit 1; }

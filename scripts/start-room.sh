@@ -12,7 +12,21 @@ PORT_FILE="${HOME}/.rooms/ports/${PROJECT_NAME}/${ROOM}"
 PROJECT_ENV_FILE="${PROJECT}/.env"
 
 CLAUDE_DATA_DIR="${HOME}/.rooms/claude/${PROJECT_NAME}/${ROOM}"
+CODEX_AUTH_SCOPE="${CODEX_AUTH_SCOPE:-global}"
+case "$CODEX_AUTH_SCOPE" in
+  global) CODEX_DATA_DIR="${HOME}/.rooms/codex/global" ;;
+  project) CODEX_DATA_DIR="${HOME}/.rooms/codex/${PROJECT_NAME}" ;;
+  room) CODEX_DATA_DIR="${HOME}/.rooms/codex/${PROJECT_NAME}/${ROOM}" ;;
+  none) CODEX_DATA_DIR="" ;;
+  *)
+    echo "Invalid CODEX_AUTH_SCOPE='${CODEX_AUTH_SCOPE}' (use global, project, room, or none)" >&2
+    exit 2
+    ;;
+esac
 mkdir -p "$SESSIONS_DIR" "$CLAUDE_DATA_DIR" "$(dirname "$PORT_FILE")"
+if [ -n "$CODEX_DATA_DIR" ]; then
+  mkdir -p "$CODEX_DATA_DIR"
+fi
 
 find_free_port() {
   python3 - <<'PY'
@@ -167,6 +181,9 @@ DOCKER_RUN_ARGS=(
   -v "${COMMON_GIT_DIR}:${COMMON_GIT_DIR}:ro"
   -w "${WORKTREE}"
 )
+if [ -n "$CODEX_DATA_DIR" ]; then
+  DOCKER_RUN_ARGS+=(-v "${CODEX_DATA_DIR}:/home/the_agent/.codex")
+fi
 if [ -f "$PROJECT_ENV_FILE" ]; then
   DOCKER_RUN_ARGS+=(--env-file "$PROJECT_ENV_FILE")
 fi
@@ -193,6 +210,9 @@ echo "branch=room/${ROOM}"
 echo "worktree=${WORKTREE}"
 if [ -f "$PROJECT_ENV_FILE" ]; then
   echo "env_file=${PROJECT_ENV_FILE}"
+fi
+if [ -n "$CODEX_DATA_DIR" ]; then
+  echo "codex_auth=${CODEX_AUTH_SCOPE}:${CODEX_DATA_DIR}"
 fi
 echo "next=agent -r ${ROOM}"
 echo "dev_command=npm install && npm run dev -- -H 0.0.0.0"

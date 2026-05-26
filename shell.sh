@@ -49,25 +49,34 @@ agent() {
       -r|--room)
         shift
         if [ "$#" -eq 0 ]; then
-          echo "Usage: agent [agent-name] [-r room-name]" >&2
+          echo "Usage: agent [agent-name] [@room|-r room-name]" >&2
           return 2
         fi
         room_name="$1"
         ;;
+      @*)
+        room_name="${1#@}"
+        if [ -z "$room_name" ]; then
+          echo "Usage: agent [agent-name] [@room|-r room-name]" >&2
+          return 2
+        fi
+        ;;
       -h|--help)
-        echo "Usage: agent [agent-name] [-r room-name]"
-        echo "  agent                 # random agent in the default room"
-        echo "  agent ada             # named agent in the default room"
-        echo "  agent ada -r feature  # named agent in room 'feature'"
-        echo "  agent -r feature      # random agent in room 'feature'"
+        echo "Usage: agent [agent-name] [@room|-r room-name]"
+        echo "  agent                  # next numbered agent in the default room"
+        echo "  agent ada              # named agent in the default room"
+        echo "  agent @feature         # next numbered agent in room 'feature'"
+        echo "  agent -r feature       # same as agent @feature (-r still works)"
+        echo "  agent ada @feature     # named agent in room 'feature'"
+        echo "  agent ada -r feature   # named agent in room 'feature' (-r still works)"
         return 0
         ;;
       *)
         if [ -z "$agent_name" ]; then
           agent_name="$1"
         else
-          echo "Usage: agent [agent-name] [-r room-name]" >&2
-          echo "  For named rooms use: agent ${agent_name} -r $1" >&2
+          echo "Usage: agent [agent-name] [@room|-r room-name]" >&2
+          echo "  For named rooms use: agent ${agent_name} @$1" >&2
           return 2
         fi
         ;;

@@ -21,11 +21,21 @@ After install, these commands are available:
 
 ```sh
 room [name]
-agent [agent-name] [-r room-name]
+agent [agent-name] [@room-name|-r room-name]
 logs [room-name]
 rooms [rm container-name]
 agents [room-name]
 agents rm [room-name] <agent-name>
+```
+
+Examples:
+
+```sh
+agent                 # starts agent-<default-room>-001, then 002, ...
+agent @feature        # starts agent-feature-001, then 002, ...
+agent -r feature      # same as agent @feature (-r remains supported)
+agent ada @feature    # starts/reuses named agent 'ada' in room 'feature'
+agent ada -r feature  # named agent with legacy -r syntax
 ```
 
 Check the installed version:

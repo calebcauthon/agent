@@ -268,7 +268,7 @@ if docker inspect "$CONTAINER" &>/dev/null; then
       echo "status=running-detached"
       echo "port=${PORT}"
       print_auth_status
-      echo "next=agent -r ${ROOM}"
+      echo "next=agent @${ROOM}"
       exit 0
     else
       echo "container=${CONTAINER}"
@@ -419,5 +419,5 @@ if [ -f "$PROJECT_ENV_FILE" ]; then
   echo "env_file=${PROJECT_ENV_FILE}"
 fi
 print_auth_status
-echo "next=agent -r ${ROOM}"
+echo "next=agent @${ROOM}"
 echo "dev_command=npm install && npm run dev -- -H 0.0.0.0"

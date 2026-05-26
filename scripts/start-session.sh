@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOM="${1:?Usage: agent <room> [agent-name]}"
+ROOM="${1:?Usage: agent [agent-name] [@room|-r room]}"
 PROJECT="${PROJECT:-$PWD}"
 PROJECT_NAME="$(basename "$PROJECT")"
 PROJECT_ENV_FILE="${PROJECT}/.env"
@@ -14,22 +14,40 @@ else
   CONTAINER="${PROJECT_NAME}-room-${ROOM}"
 fi
 
-if [ -n "${2:-}" ]; then
-  AGENT="$2"
-else
-  ADJECTIVES=(amber azure coral dusty ember frost golden jade misty rusty silver teal)
-  ANIMALS=(bear crane deer eagle finch hawk ibis jay kite lynx mole newt)
-  NUM=$(( RANDOM % 100 ))
-  ADJ=${ADJECTIVES[$((RANDOM % ${#ADJECTIVES[@]}))]}
-  ANI=${ANIMALS[$((RANDOM % ${#ANIMALS[@]}))]}
-  AGENT="${ADJ}-${ANI}-${NUM}"
-fi
-
 STATUS=$(docker inspect "$CONTAINER" --format '{{.State.Status}}' 2>/dev/null || echo "missing")
 if [ "$STATUS" != "running" ]; then
   echo "Room '${ROOM}' is not running (status: ${STATUS})"
   echo "  → room ${ROOM}"
   exit 1
+fi
+
+next_agent_name() {
+  local prefix="agent-${ROOM}-"
+
+  # -i is required so Docker receives this heredoc on stdin.
+  docker exec -i "$CONTAINER" bash -s -- "$prefix" <<'EOF'
+set -euo pipefail
+prefix="$1"
+{
+  tmux list-sessions -F "#{session_name}" 2>/dev/null || true
+  find /sessions -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null || true
+} | awk -v prefix="$prefix" '
+  index($0, prefix) == 1 {
+    suffix = substr($0, length(prefix) + 1)
+    if (suffix ~ /^[0-9][0-9][0-9]$/) {
+      n = suffix + 0
+      if (n > max) max = n
+    }
+  }
+  END { printf "%s%03d\n", prefix, max + 1 }
+'
+EOF
+}
+
+if [ -n "${2:-}" ]; then
+  AGENT="$2"
+else
+  AGENT="$(next_agent_name)"
 fi
 
 echo "agent '${AGENT}' in room '${ROOM}' (${PROJECT_NAME})"

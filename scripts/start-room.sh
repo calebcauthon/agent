@@ -12,6 +12,7 @@ PORT_FILE="${HOME}/.rooms/ports/${PROJECT_NAME}/${ROOM}"
 PROJECT_ENV_FILE="${PROJECT}/.env"
 
 CLAUDE_DATA_DIR="${HOME}/.rooms/claude/${PROJECT_NAME}/${ROOM}"
+NODE_MODULES_TARGET="/rooms/node_modules/${PROJECT_NAME}/${ROOM}"
 
 CODEX_AUTH_SCOPE="${CODEX_AUTH_SCOPE:-global}"
 case "$CODEX_AUTH_SCOPE" in
@@ -212,6 +213,22 @@ process.exit(pkg.version === "0.75.5" ? 0 : 1);
     return 0
   fi
 
+  CONTAINER_MOUNT_DESTINATIONS="$(docker inspect "$CONTAINER" --format '{{range .Mounts}}{{println .Destination}}{{end}}' 2>/dev/null || true)"
+  if printf '%s\n' "$CONTAINER_MOUNT_DESTINATIONS" | grep -Fxq "${WORKTREE}/node_modules"; then
+    echo "legacy-node-modules-mount"
+    return 0
+  fi
+  if ! printf '%s\n' "$CONTAINER_MOUNT_DESTINATIONS" | grep -Fxq "$NODE_MODULES_TARGET"; then
+    echo "node-modules-mount-changed"
+    return 0
+  fi
+
+  EXPECTED_COMMON_GIT_DIR="$(git -C "$WORKTREE" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  if [ -n "$EXPECTED_COMMON_GIT_DIR" ] && ! printf '%s\n' "$CONTAINER_MOUNT_DESTINATIONS" | grep -Fxq "${EXPECTED_COMMON_GIT_DIR}/info/exclude"; then
+    echo "git-exclude-mount-changed"
+    return 0
+  fi
+
   if [ -n "$CODEX_DATA_DIR" ]; then
     CODEX_MOUNT_SOURCE="$(docker inspect "$CONTAINER" --format '{{range .Mounts}}{{if eq .Destination "/home/the_agent/.codex"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
     if ! mount_source_matches "$CODEX_MOUNT_SOURCE" "$CODEX_DATA_DIR"; then
@@ -306,14 +323,63 @@ ROOM_BRANCH_REFS_DIR="${COMMON_GIT_DIR}/refs/heads/room/${ROOM}"
 ROOM_BRANCH_LOGS_DIR="${COMMON_GIT_DIR}/logs/refs/heads/room/${ROOM}"
 mkdir -p "${COMMON_GIT_DIR}/objects" "$ROOM_BRANCH_REFS_DIR" "$ROOM_BRANCH_LOGS_DIR"
 
+ensure_node_modules_ignored() {
+  local exclude_file="${COMMON_GIT_DIR}/info/exclude"
+  mkdir -p "$(dirname "$exclude_file")"
+  touch "$exclude_file"
+
+  # `node_modules/` ignores real directories, but not a symlink named
+  # node_modules. Since rooms use a symlink to a Docker volume, keep this local
+  # exclude in the repo metadata so room worktrees stay clean without changing
+  # the project-owned .gitignore.
+  if ! grep -Fxq "node_modules" "$exclude_file"; then
+    printf '\n# rooms: node_modules is a symlink to a Docker volume\nnode_modules\n' >> "$exclude_file"
+  fi
+}
+
+prepare_node_modules_link() {
+  local link="${WORKTREE}/node_modules"
+  local current_target=""
+
+  if [ -L "$link" ]; then
+    current_target="$(readlink "$link")"
+    if [ "$current_target" != "$NODE_MODULES_TARGET" ]; then
+      ln -sfn "$NODE_MODULES_TARGET" "$link"
+    fi
+    return 0
+  fi
+
+  if [ -e "$link" ]; then
+    if [ -d "$link" ] && [ -z "$(find "$link" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+      # Docker Desktop leaves an ACL (`deny delete`) on nested volume mountpoint
+      # directories inside bind-mounted worktrees. Clear it when migrating old
+      # rooms, then replace the directory with a normal symlink that Git can
+      # remove cleanly with the rest of the worktree.
+      chmod -RN "$link" 2>/dev/null || true
+      chflags -R nouchg,noschg "$link" 2>/dev/null || true
+      rmdir "$link"
+    else
+      echo "node_modules=${link}"
+      echo "warning=existing-node-modules-preserved; docker-node-volume-unused"
+      return 0
+    fi
+  fi
+
+  ln -s "$NODE_MODULES_TARGET" "$link"
+}
+
+ensure_node_modules_ignored
+prepare_node_modules_link
+
 DOCKER_RUN_ARGS=(
   --name "$CONTAINER"
   -p "${PORT}:3000"
   -v "${WORKTREE}:${WORKTREE}"
-  -v "${PROJECT_NAME}-node-${ROOM}:${WORKTREE}/node_modules"
+  -v "${PROJECT_NAME}-node-${ROOM}:${NODE_MODULES_TARGET}"
   -v "${SESSIONS_DIR}:/sessions"
   -v "${CLAUDE_DATA_DIR}:/home/the_agent/.claude"
   -v "${WORKTREE_GIT_DIR}:${WORKTREE_GIT_DIR}"
+  -v "${COMMON_GIT_DIR}/info/exclude:${COMMON_GIT_DIR}/info/exclude"
   -v "${COMMON_GIT_DIR}/objects:${COMMON_GIT_DIR}/objects"
   -v "${ROOM_BRANCH_REFS_DIR}:${ROOM_BRANCH_REFS_DIR}"
   -v "${ROOM_BRANCH_LOGS_DIR}:${ROOM_BRANCH_LOGS_DIR}"

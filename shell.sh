@@ -1,9 +1,26 @@
 #!/usr/bin/env bash
-# Add to ~/.zshrc:  source ~/code/rooms/shell.sh
+# Add to ~/.zshrc:  source /path/to/rooms/shell.sh
 
-# Directory containing this repo's scripts/config. Homebrew wrappers set _ROOMS_DIR;
-# local installs can set ROOMS_DIR; otherwise keep the historical checkout path.
-_ROOMS_DIR="${_ROOMS_DIR:-${ROOMS_DIR:-${HOME}/code/rooms}}"
+_rooms_shell_dir() {
+  local source_path=""
+
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    eval 'source_path="${(%):-%N}"'
+  elif [ -n "${BASH_SOURCE[0]:-}" ]; then
+    source_path="${BASH_SOURCE[0]}"
+  fi
+
+  if [ -n "$source_path" ] && [ "$source_path" != "-" ]; then
+    cd "$(dirname "$source_path")" && pwd -P
+  else
+    pwd -P
+  fi
+}
+
+# Directory containing this repo's scripts/config. Homebrew wrappers can set
+# _ROOMS_DIR; local installs can set ROOMS_DIR. Otherwise infer it from this
+# sourced file instead of assuming a checkout path.
+_ROOMS_DIR="${_ROOMS_DIR:-${ROOMS_DIR:-$(_rooms_shell_dir)}}"
 
 _rooms_project_slug() {
   local slug

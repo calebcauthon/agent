@@ -5,6 +5,10 @@ ROOM="${1:?Usage: room <name>}"
 PROJECT="${PROJECT:?PROJECT env var required (set automatically by shell functions)}"
 PROJECT_NAME="$(basename "$PROJECT")"
 CONTAINER="${PROJECT_NAME}-room-${ROOM}"
+ROOM_IMAGE="${PROJECT_NAME}-room"
+PROJECT_ROOM_IMAGE="${PROJECT_NAME}-room-project"
+REQUIRED_NODE_IMAGE="node:22.19.0-bookworm"
+REQUIRED_PI_VERSION="0.75.5"
 ROOMS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKTREE="${HOME}/.rooms/worktrees/${PROJECT_NAME}/${ROOM}"
 SESSIONS_DIR="${HOME}/.rooms/sessions/${PROJECT_NAME}/${ROOM}"
@@ -170,6 +174,16 @@ room_recreate_reason() {
     return 0
   fi
 
+  if ! docker exec "$CONTAINER" sh -lc 'command -v tmux' >/dev/null 2>&1; then
+    echo "missing-tmux"
+    return 0
+  fi
+
+  if ! docker exec "$CONTAINER" sh -lc 'command -v git' >/dev/null 2>&1; then
+    echo "missing-git"
+    return 0
+  fi
+
   if ! docker exec "$CONTAINER" node -e '
 const [major, minor, patch] = process.versions.node.split(".").map(Number);
 process.exit(major > 22 || (major === 22 && (minor > 19 || (minor === 19 && patch >= 0))) ? 0 : 1);
@@ -178,13 +192,13 @@ process.exit(major > 22 || (major === 22 && (minor > 19 || (minor === 19 && patc
     return 0
   fi
 
-  if ! docker exec "$CONTAINER" node -e '
+  if ! docker exec -e "REQUIRED_PI_VERSION=${REQUIRED_PI_VERSION}" "$CONTAINER" node -e '
 const cp = require("child_process");
 const root = cp.execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
 const pkg = require(root + "/@earendil-works/pi-coding-agent/package.json");
-process.exit(pkg.version === "0.75.5" ? 0 : 1);
+process.exit(pkg.version === process.env.REQUIRED_PI_VERSION ? 0 : 1);
 ' >/dev/null 2>&1; then
-    echo "pi-not-0.75.5"
+    echo "pi-not-${REQUIRED_PI_VERSION}"
     return 0
   fi
 
@@ -251,7 +265,8 @@ process.exit(pkg.version === "0.75.5" ? 0 : 1);
 # `agent ...` always leaves a healthy shell alive for agents.
 if docker inspect "$CONTAINER" &>/dev/null; then
   CONTAINER_CMD="$(docker inspect "$CONTAINER" --format '{{json .Config.Cmd}}')"
-  if [ "$CONTAINER_CMD" = '["bash"]' ]; then
+  CONTAINER_ENTRYPOINT="$(docker inspect "$CONTAINER" --format '{{json .Config.Entrypoint}}')"
+  if [ "$CONTAINER_CMD" = '["bash"]' ] && [ "$CONTAINER_ENTRYPOINT" = 'null' ]; then
     CONTAINER_STATUS="$(docker inspect "$CONTAINER" --format '{{.State.Status}}')"
     if [ "$CONTAINER_STATUS" != "running" ]; then
       docker start "$CONTAINER" >/dev/null
@@ -279,6 +294,7 @@ if docker inspect "$CONTAINER" &>/dev/null; then
     echo "container=${CONTAINER}"
     echo "status=recreating-non-detached-room"
     echo "old_cmd=${CONTAINER_CMD}"
+    echo "old_entrypoint=${CONTAINER_ENTRYPOINT}"
     docker rm -f "$CONTAINER" >/dev/null
   fi
 fi
@@ -383,6 +399,7 @@ DOCKER_RUN_ARGS=(
   -v "${COMMON_GIT_DIR}/objects:${COMMON_GIT_DIR}/objects"
   -v "${ROOM_BRANCH_REFS_DIR}:${ROOM_BRANCH_REFS_DIR}"
   -v "${ROOM_BRANCH_LOGS_DIR}:${ROOM_BRANCH_LOGS_DIR}"
+  --entrypoint ""
   -w "${WORKTREE}"
 )
 if [ -n "$CODEX_DATA_DIR" ]; then
@@ -397,14 +414,118 @@ fi
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   DOCKER_RUN_ARGS+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
 fi
-DOCKER_RUN_ARGS+=("${PROJECT_NAME}-room" bash)
+DOCKER_RUN_ARGS+=("$ROOM_IMAGE" bash)
 
-# Use project's Dockerfile if it has one, otherwise fall back to rooms default
-if [ -f "${PROJECT}/Dockerfile" ]; then
-  docker build -t "${PROJECT_NAME}-room" "$PROJECT"
-else
-  docker build -t "${PROJECT_NAME}-room" "$ROOMS_DIR"
-fi
+build_room_image() {
+  if [ -f "${PROJECT}/Dockerfile" ]; then
+    # First build the project image so project-specific OS packages and language
+    # runtimes remain available. Then layer the room shell/agent tooling on top;
+    # production Dockerfiles often omit zsh/tmux/node and may define ENTRYPOINTs.
+    docker build -t "$PROJECT_ROOM_IMAGE" "$PROJECT"
+    docker build \
+      --build-arg "PROJECT_IMAGE=${PROJECT_ROOM_IMAGE}" \
+      --build-arg "NODE_IMAGE=${REQUIRED_NODE_IMAGE}" \
+      --build-arg "PI_VERSION=${REQUIRED_PI_VERSION}" \
+      -t "$ROOM_IMAGE" \
+      -f - "$PROJECT" <<'DOCKERFILE'
+ARG NODE_IMAGE=node:22.19.0-bookworm
+ARG PROJECT_IMAGE=scratch
+FROM ${NODE_IMAGE} AS rooms-node
+
+FROM ${PROJECT_IMAGE}
+
+ARG PI_VERSION=0.75.5
+USER root
+SHELL ["/bin/sh", "-c"]
+ENV SHELL=/bin/zsh \
+  ZSH=/opt/oh-my-zsh \
+  PATH=/usr/local/bin:${PATH} \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  TERM=xterm-256color \
+  COLORTERM=truecolor \
+  NONINTERACTIVE=1 \
+  HOMEBREW_NO_ANALYTICS=1 \
+  HOMEBREW_NO_ENV_HINTS=1
+
+COPY --from=rooms-node /usr/local/bin/node /usr/local/bin/node
+COPY --from=rooms-node /usr/local/bin/npm /usr/local/bin/npm
+COPY --from=rooms-node /usr/local/bin/npx /usr/local/bin/npx
+COPY --from=rooms-node /usr/local/bin/corepack /usr/local/bin/corepack
+COPY --from=rooms-node /usr/local/lib/node_modules /usr/local/lib/node_modules
+
+RUN set -eux; \
+  if command -v apt-get >/dev/null 2>&1; then \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      bash \
+      build-essential \
+      ca-certificates \
+      curl \
+      file \
+      git \
+      iproute2 \
+      less \
+      procps \
+      shellcheck \
+      sudo \
+      tmux \
+      zoxide \
+      zsh; \
+    rm -rf /var/lib/apt/lists/*; \
+  else \
+    echo "Unsupported project Dockerfile base image: apt-get is required to add room tooling." >&2; \
+    exit 42; \
+  fi
+
+RUN set -eux; \
+  rm -rf /opt/oh-my-zsh; \
+  git clone --depth=1 https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh; \
+  git clone --depth=1 https://github.com/romkatv/powerlevel10k.git /opt/oh-my-zsh/custom/themes/powerlevel10k; \
+  git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions.git /opt/oh-my-zsh/custom/plugins/zsh-autosuggestions; \
+  git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting.git /opt/oh-my-zsh/custom/plugins/zsh-syntax-highlighting; \
+  chmod -R a+rX /opt/oh-my-zsh
+
+RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@${PI_VERSION}"
+
+WORKDIR /workspace
+CMD ["zsh"]
+DOCKERFILE
+  else
+    docker build -t "$ROOM_IMAGE" "$ROOMS_DIR"
+  fi
+}
+
+validate_room_image() {
+  docker run --rm --entrypoint sh -e "REQUIRED_PI_VERSION=${REQUIRED_PI_VERSION}" "$ROOM_IMAGE" -lc '
+    set -eu
+    command -v bash >/dev/null
+    command -v zsh >/dev/null
+    command -v tmux >/dev/null
+    command -v git >/dev/null
+    command -v node >/dev/null
+    command -v npm >/dev/null
+    command -v zoxide >/dev/null
+    test -f /opt/oh-my-zsh/oh-my-zsh.sh
+    test -d /opt/oh-my-zsh/custom/themes/powerlevel10k
+    test -d /opt/oh-my-zsh/custom/plugins/zsh-autosuggestions
+    test -d /opt/oh-my-zsh/custom/plugins/zsh-syntax-highlighting
+    node -e '\''
+      const [major, minor, patch] = process.versions.node.split(".").map(Number);
+      process.exit(major > 22 || (major === 22 && (minor > 19 || (minor === 19 && patch >= 0))) ? 0 : 1);
+    '\''
+    node -e '\''
+      const cp = require("child_process");
+      const root = cp.execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+      const pkg = require(root + "/@earendil-works/pi-coding-agent/package.json");
+      process.exit(pkg.version === process.env.REQUIRED_PI_VERSION ? 0 : 1);
+    '\''
+  '
+}
+
+build_room_image
+validate_room_image
 
 # Keep the room alive with a detached bash process. Agents attach later via tmux.
 docker run -dit "${DOCKER_RUN_ARGS[@]}" >/dev/null

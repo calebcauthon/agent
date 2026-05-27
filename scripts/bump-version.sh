@@ -144,13 +144,25 @@ update_formula_version() {
 
   archive_url="$(release_archive_url "$new_version")"
 
-  if ! grep -Fq "$old_version" "$formula_file"; then
-    echo "error: old version $old_version not found in $formula_file" >&2
+  # Keep the formula authoritative even when it drifted or a previous release
+  # stopped halfway through. Do not require the formula to contain VERSION's old
+  # value; just set the URL and explicit version line to the intended release.
+  if ! grep -Eq '^[[:blank:]]*url[[:blank:]]+"' "$formula_file"; then
+    echo "error: could not find a double-quoted url line in $formula_file" >&2
     exit 1
   fi
 
-  perl -0pi -e "s/\Q$old_version\E/$new_version/g" "$formula_file"
+  if ! grep -Fq "$old_version" "$formula_file"; then
+    echo "warning: old version $old_version not found in $formula_file; overwriting formula metadata anyway" >&2
+  fi
+
   perl -0pi -e "s{^([[:blank:]]*)url[[:blank:]]+\"[^\"]+\"[^\n]*}{\${1}url \"$archive_url\"}m" "$formula_file"
+
+  if grep -Eq '^[[:blank:]]*version[[:blank:]]+"[^"]+"' "$formula_file"; then
+    perl -0pi -e "s{^([[:blank:]]*)version[[:blank:]]+\"[^\"]+\"[^\n]*}{\${1}version \"$new_version\"}m" "$formula_file"
+  else
+    perl -0pi -e "s{(^[[:blank:]]*url[^\n]*\n)}{\${1}  version \"$new_version\"\n}m" "$formula_file"
+  fi
 }
 
 update_formula_sha256() {
@@ -205,9 +217,13 @@ if ! [[ "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "error: new version must be MAJOR.MINOR.PATCH; got '$new_version'" >&2
   exit 1
 fi
+source_already_at_version="no"
 if [[ "$new_version" == "$old_version" ]]; then
-  echo "error: new version is the same as current VERSION ($old_version)" >&2
-  exit 1
+  if [[ -z "$explicit_version" ]]; then
+    echo "error: new version is the same as current VERSION ($old_version)" >&2
+    exit 1
+  fi
+  source_already_at_version="yes"
 fi
 
 tap_dir="$(detect_tap_dir)"
@@ -217,17 +233,24 @@ formula_file="$tap_dir/Formula/agent.rb"
 require_clean_repo "$source_dir" "source repo"
 require_clean_repo "$tap_dir" "tap repo"
 
-if git -C "$source_dir" rev-parse "v$new_version" >/dev/null 2>&1; then
+if [[ "$source_already_at_version" == "no" ]] && git -C "$source_dir" rev-parse "v$new_version" >/dev/null 2>&1; then
   echo "error: tag v$new_version already exists in source repo" >&2
   exit 1
 fi
 
-echo "Bumping agent $old_version -> $new_version"
-echo "$new_version" >"$version_file"
+if [[ "$source_already_at_version" == "yes" ]]; then
+  echo "Repairing formula for agent $new_version (source VERSION is already $new_version)"
+  if ! git -C "$source_dir" rev-parse "v$new_version" >/dev/null 2>&1; then
+    git -C "$source_dir" tag -a "v$new_version" -m "Release v$new_version"
+  fi
+else
+  echo "Bumping agent $old_version -> $new_version"
+  echo "$new_version" >"$version_file"
 
-git -C "$source_dir" add VERSION
-git -C "$source_dir" commit -m "Release v$new_version"
-git -C "$source_dir" tag -a "v$new_version" -m "Release v$new_version"
+  git -C "$source_dir" add VERSION
+  git -C "$source_dir" commit -m "Release v$new_version"
+  git -C "$source_dir" tag -a "v$new_version" -m "Release v$new_version"
+fi
 push_repo "$source_dir" yes
 
 update_formula_version "$formula_file" "$old_version" "$new_version"
